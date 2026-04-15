@@ -70,4 +70,4 @@ jobs:
           token: ${{ secrets.INFRA_DISPATCH_TOKEN }}
           repository: TheSemicolon/agent-expertise-api-infra
           event-type: deploy
-          client-payload: '{"image": "ghcr.io/thesemicolon/agent-expertise-api", "tag": "${{ steps.meta.outputs.version }}"}'
+          client-payload: '{"image_tag": "${{ steps.meta.outputs.version }}"}'
