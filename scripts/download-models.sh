@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# download-models.sh — Download bge-micro-v2 ONNX model files
+#
+# Usage:
+#   ./scripts/download-models.sh                          # default: src/ExpertiseApi/models/
+#   DEST_DIR=/custom/path ./scripts/download-models.sh    # custom destination
+#   FORCE=1 ./scripts/download-models.sh                  # re-download even if files exist
+#
+# Downloads the quantized bge-micro-v2 model (~17.4 MB) and vocab.txt (~232 KB)
+# from the SmartComponents Hugging Face mirror (canonical source for .NET/SK).
+#
+# Idempotent: skips files that already exist and pass size + checksum validation.
+# The model file is saved as model.onnx (not model_quantized.onnx) to match
+# the default path expected by Program.cs and the Dockerfile.
+#
+# To update checksums after a model version bump:
+#   FORCE=1 ./scripts/download-models.sh
+#   sha256sum src/ExpertiseApi/models/model.onnx src/ExpertiseApi/models/vocab.txt
+# Then update SHA256_MODEL_ONNX, SHA256_VOCAB_TXT, and bump MODEL_VERSION below.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+DEST_DIR="${DEST_DIR:-${REPO_ROOT}/src/ExpertiseApi/models}"
+FORCE="${FORCE:-0}"
+
+# Bump MODEL_VERSION when model files change. This string is embedded in the
+# script, so any change here automatically busts the CI cache (keyed on
+# hashFiles('scripts/download-models.sh')).
+MODEL_VERSION="1"
+
+HF_BASE="https://huggingface.co/SmartComponents/bge-micro-v2/resolve/main"
+
+# SHA-256 checksums for model version ${MODEL_VERSION}.
+# Computed from: sha256sum model.onnx vocab.txt
+SHA256_MODEL_ONNX="ed65e36025aa94cb74207dab863c85452919ec0ab7df3512092932aa22c9a33a"
+SHA256_VOCAB_TXT="07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3"
+
+log() { printf '[download-models] %s\n' "$1"; }
+err() { printf '[download-models] ERROR: %s\n' "$1" >&2; exit 1; }
+
+# Verify SHA-256 checksum of a file.
+# Args: <file> <expected_sha256>
+verify_checksum() {
+  local file="$1" expected="$2"
+  local filename="${file##*/}"
+  local actual
+  actual=$(sha256sum "${file}" | awk '{print $1}')
+  if [[ "${actual}" != "${expected}" ]]; then
+    err "${filename} checksum mismatch (expected ${expected}, got ${actual}). Delete the file and re-run, or check if the upstream model changed."
+  fi
+  log "  ${filename}: checksum OK"
+}
+
+# Download a single file if missing or suspiciously small.
+# Args: <dest_file> <url> <min_bytes> <display_name> <expected_sha256>
+download_file() {
+  local dest="$1" url="$2" min_bytes="$3" display_name="$4" expected_sha256="$5"
+  local filename="${dest##*/}"
+
+  if [[ "${FORCE}" != "1" ]] && [[ -f "${dest}" ]]; then
+    local existing_size
+    existing_size=$(wc -c < "${dest}")
+    if (( existing_size >= min_bytes )); then
+      log "${filename} already present — verifying checksum"
+      verify_checksum "${dest}" "${expected_sha256}"
+      return 0
+    fi
+    log "  ${filename} exists but is suspiciously small (${existing_size} bytes) — re-downloading"
+  fi
+
+  log "Downloading ${display_name}..."
+  curl -fsSL --retry 3 --retry-delay 5 "${url}" -o "${dest}" \
+    || err "Failed to download ${filename} from ${url}"
+
+  local size
+  size=$(wc -c < "${dest}")
+  (( size < min_bytes )) && err "${filename} is suspiciously small (${size} bytes). Check the URL."
+  log "  ${filename}: ${size} bytes"
+
+  verify_checksum "${dest}" "${expected_sha256}"
+}
+
+mkdir -p "${DEST_DIR}"
+
+download_file "${DEST_DIR}/model.onnx" "${HF_BASE}/onnx/model_quantized.onnx" 1048576 \
+  "model.onnx (quantized bge-micro-v2, ~17.4 MB)" "${SHA256_MODEL_ONNX}"
+
+download_file "${DEST_DIR}/vocab.txt" "${HF_BASE}/vocab.txt" 1024 \
+  "vocab.txt" "${SHA256_VOCAB_TXT}"
+
+log "Model files ready in ${DEST_DIR} (model version ${MODEL_VERSION})"

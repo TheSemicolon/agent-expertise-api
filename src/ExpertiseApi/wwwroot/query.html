@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Expertise Query</title>
+  <style>
+    :root {
+      --bg: #fafafa;
+      --card: #fff;
+      --border: #ddd;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --text: #1a1a1a;
+      --muted: #666;
+      --pre-bg: #f4f4f5;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem 1rem;
+    }
+
+    h1 { margin-bottom: .25rem; }
+    .subtitle { color: var(--muted); margin-bottom: 1.5rem; font-size: .9rem; }
+
+    .auth-bar {
+      display: flex;
+      gap: .5rem;
+      align-items: center;
+      margin-bottom: 2rem;
+      padding: 1rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .auth-bar label { font-weight: 600; white-space: nowrap; }
+    .auth-bar input {
+      flex: 1;
+      padding: .4rem .6rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: .9rem;
+    }
+
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: .75rem 1rem;
+      cursor: pointer;
+      user-select: none;
+      border-bottom: 1px solid transparent;
+    }
+    .panel-header:hover { background: var(--pre-bg); border-radius: 8px; }
+    .panel.open .panel-header {
+      border-bottom-color: var(--border);
+      border-radius: 8px 8px 0 0;
+    }
+    .panel-header h2 { font-size: 1rem; }
+    .panel-header .method {
+      font-size: .75rem;
+      font-family: monospace;
+      background: var(--pre-bg);
+      padding: .15rem .4rem;
+      border-radius: 3px;
+      color: var(--muted);
+    }
+
+    .panel-body { display: none; padding: 1rem; }
+    .panel.open .panel-body { display: block; }
+
+    .field { margin-bottom: .75rem; }
+    .field label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: .2rem; }
+    .field input, .field select {
+      width: 100%;
+      padding: .4rem .6rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: .9rem;
+    }
+    .field select { background: var(--card); }
+    .field-row { display: flex; gap: .75rem; flex-wrap: wrap; }
+    .field-row .field { flex: 1; min-width: 140px; }
+
+    .checkbox-field {
+      display: flex;
+      align-items: center;
+      gap: .4rem;
+      margin-bottom: .75rem;
+    }
+    .checkbox-field input { width: auto; }
+    .checkbox-field label { font-size: .85rem; font-weight: 600; margin: 0; }
+
+    .run-btn {
+      display: inline-block;
+      padding: .45rem 1.2rem;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-size: .9rem;
+      cursor: pointer;
+    }
+    .run-btn:hover { background: var(--accent-hover); }
+    .run-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    .result {
+      margin-top: 1rem;
+      background: var(--pre-bg);
+      border-radius: 4px;
+      padding: 1rem;
+      overflow: auto;
+      max-height: 500px;
+      white-space: pre-wrap;
+      font-family: monospace;
+      font-size: .85rem;
+      display: none;
+    }
+    .result.visible { display: block; }
+    .result.error { color: #dc2626; }
+
+    .result-meta {
+      display: none;
+      font-size: .8rem;
+      color: var(--muted);
+      margin-top: .5rem;
+    }
+    .result-meta.visible { display: block; }
+  </style>
+</head>
+<body>
+  <h1>Expertise Query</h1>
+  <p class="subtitle">Browse and search the expertise store. Read-only.</p>
+
+  <div class="auth-bar">
+    <label for="apiKey">API Key</label>
+    <input id="apiKey" type="password" placeholder="Bearer token" />
+  </div>
+
+  <!-- List / Filter -->
+  <div class="panel open" id="panel-list">
+    <div class="panel-header" onclick="togglePanel('panel-list')">
+      <h2>List &amp; Filter Entries</h2>
+      <span class="method">GET /expertise</span>
+    </div>
+    <div class="panel-body">
+      <div class="field-row">
+        <div class="field">
+          <label for="list-domain">Domain</label>
+          <input id="list-domain" type="text" placeholder="e.g. docker, shared" />
+        </div>
+        <div class="field">
+          <label for="list-tags">Tags</label>
+          <input id="list-tags" type="text" placeholder="comma-separated" />
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="list-entryType">Entry Type</label>
+          <select id="list-entryType">
+            <option value="">Any</option>
+            <option value="IssueFix">IssueFix</option>
+            <option value="Caveat">Caveat</option>
+            <option value="Requirement">Requirement</option>
+            <option value="Pattern">Pattern</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="list-severity">Severity</label>
+          <select id="list-severity">
+            <option value="">Any</option>
+            <option value="Info">Info</option>
+            <option value="Warning">Warning</option>
+            <option value="Critical">Critical</option>
+          </select>
+        </div>
+      </div>
+      <div class="checkbox-field">
+        <input id="list-deprecated" type="checkbox" />
+        <label for="list-deprecated">Include deprecated</label>
+      </div>
+      <button class="run-btn" onclick="runList()">Run</button>
+      <div class="result" id="result-list"></div>
+      <div class="result-meta" id="meta-list"></div>
+    </div>
+  </div>
+
+  <!-- Get by ID -->
+  <div class="panel" id="panel-get">
+    <div class="panel-header" onclick="togglePanel('panel-get')">
+      <h2>Get Entry by ID</h2>
+      <span class="method">GET /expertise/{id}</span>
+    </div>
+    <div class="panel-body">
+      <div class="field">
+        <label for="get-id">Entry ID</label>
+        <input id="get-id" type="text" placeholder="GUID" />
+      </div>
+      <button class="run-btn" onclick="runGetById()">Run</button>
+      <div class="result" id="result-get"></div>
+      <div class="result-meta" id="meta-get"></div>
+    </div>
+  </div>
+
+  <!-- Keyword Search -->
+  <div class="panel" id="panel-keyword">
+    <div class="panel-header" onclick="togglePanel('panel-keyword')">
+      <h2>Keyword Search</h2>
+      <span class="method">GET /expertise/search</span>
+    </div>
+    <div class="panel-body">
+      <div class="field">
+        <label for="kw-q">Search query</label>
+        <input id="kw-q" type="text" placeholder="e.g. EF Core migration" />
+      </div>
+      <div class="checkbox-field">
+        <input id="kw-deprecated" type="checkbox" />
+        <label for="kw-deprecated">Include deprecated</label>
+      </div>
+      <button class="run-btn" onclick="runKeywordSearch()">Run</button>
+      <div class="result" id="result-keyword"></div>
+      <div class="result-meta" id="meta-keyword"></div>
+    </div>
+  </div>
+
+  <!-- Semantic Search -->
+  <div class="panel" id="panel-semantic">
+    <div class="panel-header" onclick="togglePanel('panel-semantic')">
+      <h2>Semantic Search</h2>
+      <span class="method">GET /expertise/search/semantic</span>
+    </div>
+    <div class="panel-body">
+      <div class="field">
+        <label for="sem-q">Search query</label>
+        <input id="sem-q" type="text" placeholder="e.g. how to handle connection pooling" />
+      </div>
+      <div class="field">
+        <label for="sem-limit">Limit</label>
+        <input id="sem-limit" type="number" value="10" min="1" max="100" />
+      </div>
+      <div class="checkbox-field">
+        <input id="sem-deprecated" type="checkbox" />
+        <label for="sem-deprecated">Include deprecated</label>
+      </div>
+      <button class="run-btn" onclick="runSemanticSearch()">Run</button>
+      <div class="result" id="result-semantic"></div>
+      <div class="result-meta" id="meta-semantic"></div>
+    </div>
+  </div>
+
+  <script>
+    function togglePanel(id) {
+      document.getElementById(id).classList.toggle('open');
+    }
+
+    function getApiKey() {
+      return document.getElementById('apiKey').value.trim();
+    }
+
+    var activeControllers = {};
+
+    async function apiCall(path, resultId) {
+      var key = getApiKey();
+      if (!key) {
+        showResult(resultId, 'Enter an API key above.', true);
+        return;
+      }
+
+      if (activeControllers[resultId]) {
+        activeControllers[resultId].abort();
+      }
+      var controller = new AbortController();
+      activeControllers[resultId] = controller;
+
+      var btn = document.getElementById(resultId).closest('.panel-body').querySelector('.run-btn');
+      btn.disabled = true;
+      showResult(resultId, 'Loading...', false);
+
+      var start = performance.now();
+      try {
+        var res = await fetch(path, {
+          headers: { 'Authorization': 'Bearer ' + key },
+          signal: controller.signal
+        });
+        var elapsed = Math.round(performance.now() - start);
+        var ct = res.headers.get('content-type') || '';
+        var isJson = ct.includes('application/json') || ct.includes('application/problem+json');
+        var body = isJson ? await res.json() : await res.text();
+        var display = isJson ? JSON.stringify(body, null, 2) : body;
+        var meta = res.status + ' ' + res.statusText + ' \u2014 ' + elapsed + 'ms';
+        if (res.ok && isJson) {
+          meta += ' \u2014 ' + (Array.isArray(body) ? body.length + ' entries' : '1 entry');
+        }
+        showResult(resultId, display, !res.ok);
+        showMeta(resultId, meta);
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        showResult(resultId, 'Request failed: ' + err.message, true);
+        showMeta(resultId, '');
+      } finally {
+        delete activeControllers[resultId];
+        btn.disabled = false;
+      }
+    }
+
+    function showResult(id, text, isError) {
+      var el = document.getElementById(id);
+      el.textContent = text;
+      el.classList.add('visible');
+      el.classList.toggle('error', isError);
+    }
+
+    function showMeta(id, text) {
+      var metaId = id.replace('result-', 'meta-');
+      var el = document.getElementById(metaId);
+      if (text) {
+        el.textContent = text;
+        el.classList.add('visible');
+      } else {
+        el.classList.remove('visible');
+      }
+    }
+
+    function buildQuery(params) {
+      var filtered = {};
+      for (var key of Object.keys(params)) {
+        var val = params[key];
+        if (val !== '' && val !== null && val !== undefined && val !== false) {
+          filtered[key] = val;
+        }
+      }
+      var qs = new URLSearchParams(filtered).toString();
+      return qs ? '?' + qs : '';
+    }
+
+    function runList() {
+      var qs = buildQuery({
+        domain: document.getElementById('list-domain').value.trim(),
+        tags: document.getElementById('list-tags').value.trim(),
+        entryType: document.getElementById('list-entryType').value,
+        severity: document.getElementById('list-severity').value,
+        includeDeprecated: document.getElementById('list-deprecated').checked || ''
+      });
+      apiCall('/expertise' + qs, 'result-list');
+    }
+
+    function runGetById() {
+      var id = document.getElementById('get-id').value.trim();
+      if (!id) {
+        showResult('result-get', 'Enter an entry ID.', true);
+        return;
+      }
+      apiCall('/expertise/' + encodeURIComponent(id), 'result-get');
+    }
+
+    function runKeywordSearch() {
+      var q = document.getElementById('kw-q').value.trim();
+      if (!q) {
+        showResult('result-keyword', 'Enter a search query.', true);
+        return;
+      }
+      var qs = buildQuery({
+        q: q,
+        includeDeprecated: document.getElementById('kw-deprecated').checked || ''
+      });
+      apiCall('/expertise/search' + qs, 'result-keyword');
+    }
+
+    function runSemanticSearch() {
+      var q = document.getElementById('sem-q').value.trim();
+      if (!q) {
+        showResult('result-semantic', 'Enter a search query.', true);
+        return;
+      }
+      var qs = buildQuery({
+        q: q,
+        limit: document.getElementById('sem-limit').value,
+        includeDeprecated: document.getElementById('sem-deprecated').checked || ''
+      });
+      apiCall('/expertise/search/semantic' + qs, 'result-semantic');
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+image:
+  repository: ghcr.io/thesemicolon/agent-expertise-api
+  tag: latest
+  pullPolicy: Always
+
+imagePullSecrets:
+  - name: ghcr-pull-secret
+
+replicaCount: 1
+
+service:
+  port: 80
+  targetPort: 8080
+
+ingress:
+  hostname: expertise.example.com
+  clusterIssuer: letsencrypt-prod
+
+auth:
+  mode: apikey
+  secretName: expertise-api-app
+
+postgres:
+  image: pgvector/pgvector:pg17
+  storage: 1Gi
+  secretName: expertise-postgres
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+pgbouncer:
+  image: edoburu/pgbouncer:v1.25.1-p0
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  image: schickling/postgres-backup-s3:latest
+  secretName: expertise-s3-backup
+  retention: "7"
+  s3:
+    bucket: expertise-backup
+    endpoint: ""
+    forcePathStyle: false

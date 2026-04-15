@@ -1,0 +1,226 @@
+using ExpertiseApi.Data;
+using ExpertiseApi.Models;
+using ExpertiseApi.Services;
+using Microsoft.AspNetCore.Mvc;
+using Pgvector;
+
+namespace ExpertiseApi.Endpoints;
+
+public static class ExpertiseEndpoints
+{
+    public static RouteGroupBuilder MapExpertiseEndpoints(this WebApplication app)
+    {
+        var group = app.MapGroup("/expertise")
+            .WithTags("Expertise")
+            .RequireAuthorization();
+
+        group.MapGet("/", ListEntries)
+            .RequireAuthorization("ReadAccess");
+
+        group.MapGet("/{id:guid}", GetEntry)
+            .RequireAuthorization("ReadAccess");
+
+        group.MapPost("/", CreateEntry)
+            .RequireAuthorization("WriteAccess");
+
+        group.MapPatch("/{id:guid}", UpdateEntry)
+            .RequireAuthorization("WriteAccess");
+
+        group.MapDelete("/{id:guid}", DeleteEntry)
+            .RequireAuthorization("WriteAccess");
+
+        group.MapPost("/batch", CreateBatch)
+            .RequireAuthorization("WriteAccess");
+
+        return group;
+    }
+
+    private static async Task<IResult> ListEntries(
+        IExpertiseRepository repo,
+        [FromQuery] string? domain,
+        [FromQuery] string? tags,
+        [FromQuery] EntryType? entryType,
+        [FromQuery] Severity? severity,
+        [FromQuery] bool includeDeprecated = false,
+        CancellationToken ct = default)
+    {
+        var tagList = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+        var entries = await repo.ListAsync(domain, tagList, entryType, severity, includeDeprecated, ct);
+        return Results.Ok(entries);
+    }
+
+    private static async Task<IResult> GetEntry(
+        Guid id,
+        IExpertiseRepository repo,
+        CancellationToken ct)
+    {
+        var entry = await repo.GetByIdAsync(id, ct);
+        return entry is null ? Results.NotFound() : Results.Ok(entry);
+    }
+
+    private static async Task<IResult> CreateEntry(
+        CreateExpertiseRequest request,
+        IExpertiseRepository repo,
+        EmbeddingService embeddingService,
+        DeduplicationService dedup,
+        CancellationToken ct)
+    {
+        var embedding = await embeddingService.GenerateEmbeddingAsync(
+            EmbeddingService.BuildInputText(request.Title, request.Body), ct);
+
+        var (isDuplicate, existing) = await dedup.CheckAsync(request, embedding, ct);
+        if (isDuplicate)
+            return Results.Ok(existing);
+
+        var created = await repo.CreateAsync(BuildEntry(request, embedding), ct);
+        return Results.Created($"/expertise/{created.Id}", created);
+    }
+
+    private static async Task<IResult> UpdateEntry(
+        Guid id,
+        UpdateExpertiseRequest request,
+        IExpertiseRepository repo,
+        EmbeddingService embeddingService,
+        CancellationToken ct)
+    {
+        var needsReembed = request.Title is not null || request.Body is not null;
+
+        var updated = await repo.UpdateAsync(id, async entry =>
+        {
+            if (request.Domain is not null) entry.Domain = request.Domain;
+            if (request.Tags is not null) entry.Tags = request.Tags;
+            if (request.Title is not null) entry.Title = request.Title;
+            if (request.Body is not null) entry.Body = request.Body;
+            if (request.EntryType is not null) entry.EntryType = request.EntryType.Value;
+            if (request.Severity is not null) entry.Severity = request.Severity.Value;
+            if (request.Source is not null) entry.Source = request.Source;
+            if (request.SourceVersion is not null) entry.SourceVersion = request.SourceVersion;
+
+            if (needsReembed)
+            {
+                entry.Embedding = await embeddingService.GenerateEmbeddingAsync(
+                    EmbeddingService.BuildInputText(entry.Title, entry.Body), ct);
+            }
+        }, ct);
+
+        return updated is null ? Results.NotFound() : Results.Ok(updated);
+    }
+
+    private static async Task<IResult> CreateBatch(
+        List<CreateExpertiseRequest> requests,
+        IExpertiseRepository repo,
+        EmbeddingService embeddingService,
+        DeduplicationService dedup,
+        ILoggerFactory loggerFactory,
+        CancellationToken ct)
+    {
+        const int MaxBatchSize = 100;
+
+        if (requests is null || requests.Count == 0)
+            return Results.Problem("Request body must contain at least one entry.", statusCode: 400);
+
+        if (requests.Count > MaxBatchSize)
+            return Results.Problem($"Batch size exceeds maximum of {MaxBatchSize} entries.", statusCode: 400);
+
+        var logger = loggerFactory.CreateLogger("ExpertiseApi.Endpoints.BatchIntake");
+        var results = new List<BatchEntryResult>(requests.Count);
+
+        for (var i = 0; i < requests.Count; i++)
+        {
+            var request = requests[i];
+
+            if (string.IsNullOrWhiteSpace(request.Domain) ||
+                string.IsNullOrWhiteSpace(request.Title) ||
+                string.IsNullOrWhiteSpace(request.Body) ||
+                string.IsNullOrWhiteSpace(request.Source))
+            {
+                results.Add(new BatchEntryResult(i, BatchEntryStatus.Rejected, null,
+                    "Domain, Title, Body, and Source are required."));
+                continue;
+            }
+
+            try
+            {
+                var embedding = await embeddingService.GenerateEmbeddingAsync(
+                    EmbeddingService.BuildInputText(request.Title, request.Body), ct);
+
+                var (isDuplicate, existing) = await dedup.CheckAsync(request, embedding, ct);
+                if (isDuplicate && existing is not null)
+                {
+                    results.Add(new BatchEntryResult(i, BatchEntryStatus.Duplicate, existing.Id, null));
+                    continue;
+                }
+
+                var created = await repo.CreateAsync(BuildEntry(request, embedding), ct);
+                results.Add(new BatchEntryResult(i, BatchEntryStatus.Created, created.Id, null));
+            }
+            catch (OperationCanceledException)
+            {
+                for (var j = i; j < requests.Count; j++)
+                    results.Add(new BatchEntryResult(j, BatchEntryStatus.Failed, null, "Request was cancelled."));
+                break;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Batch entry {Index} failed", i);
+                results.Add(new BatchEntryResult(i, BatchEntryStatus.Failed, null, "Entry could not be created."));
+            }
+        }
+
+        var allCreated = results.All(r => r.Status == BatchEntryStatus.Created);
+        return allCreated
+            ? Results.Ok(results)
+            : Results.Json(results, statusCode: 207);
+    }
+
+    private static ExpertiseEntry BuildEntry(CreateExpertiseRequest request, Vector embedding) => new()
+    {
+        Domain = request.Domain,
+        Tags = request.Tags ?? [],
+        Title = request.Title,
+        Body = request.Body,
+        EntryType = request.EntryType,
+        Severity = request.Severity,
+        Source = request.Source,
+        SourceVersion = request.SourceVersion,
+        Embedding = embedding
+    };
+
+    private static async Task<IResult> DeleteEntry(
+        Guid id,
+        IExpertiseRepository repo,
+        CancellationToken ct)
+    {
+        var deleted = await repo.SoftDeleteAsync(id, ct);
+        return deleted ? Results.NoContent() : Results.NotFound();
+    }
+}
+
+public enum BatchEntryStatus { Created, Duplicate, Rejected, Failed }
+
+public record BatchEntryResult(
+    int Index,
+    BatchEntryStatus Status,
+    Guid? Id,
+    string? Error);
+
+public record CreateExpertiseRequest(
+    string Domain,
+    string Title,
+    string Body,
+    EntryType EntryType,
+    Severity Severity,
+    string Source,
+    List<string>? Tags = null,
+    string? SourceVersion = null);
+
+public record UpdateExpertiseRequest(
+    string? Domain = null,
+    string? Title = null,
+    string? Body = null,
+    EntryType? EntryType = null,
+    Severity? Severity = null,
+    string? Source = null,
+    List<string>? Tags = null,
+    string? SourceVersion = null);

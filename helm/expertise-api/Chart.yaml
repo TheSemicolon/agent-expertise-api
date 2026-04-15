@@ -1,0 +1,6 @@
+apiVersion: v2
+name: expertise-api
+description: Self-hosted REST API for storing and serving expertise entries consumed by AI agents
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

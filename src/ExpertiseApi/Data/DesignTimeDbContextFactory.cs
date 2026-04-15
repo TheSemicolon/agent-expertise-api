@@ -1,0 +1,15 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Design;
+
+namespace ExpertiseApi.Data;
+
+public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<ExpertiseDbContext>
+{
+    public ExpertiseDbContext CreateDbContext(string[] args)
+    {
+        var optionsBuilder = new DbContextOptionsBuilder<ExpertiseDbContext>();
+        optionsBuilder.UseNpgsql("Host=localhost;Database=expertise", o => o.UseVector());
+
+        return new ExpertiseDbContext(optionsBuilder.Options);
+    }
+}

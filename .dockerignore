@@ -1,0 +1,14 @@
+**/.git
+**/.vs
+**/.vscode
+**/.idea
+**/bin
+**/obj
+**/node_modules
+**/.env
+**/deploy
+**/helm
+**/scripts
+**/docs
+**/*.md
+!src/

@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "expertise-api.fullname" . }}-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "expertise-api.labels" . | nindent 4 }}
+data:
+  postgresql.conf: |
+    # Connection
+    listen_addresses = '*'
+    port = 5432
+    max_connections = 50
+
+    # Memory
+    shared_buffers = 32MB
+    work_mem = 4MB
+    maintenance_work_mem = 16MB
+    effective_cache_size = 128MB
+
+    # WAL and crash safety
+    fsync = on
+    full_page_writes = on
+    wal_level = replica
+    synchronous_commit = on
+    checkpoint_timeout = 15min
+    checkpoint_completion_target = 0.9
+
+    # Logging
+    log_min_duration_statement = 500
+    log_checkpoints = on
+    log_connections = on
+    log_lock_waits = on
+    log_temp_files = 0
+    log_line_prefix = '%t [%p]: user=%u,db=%d,app=%a '
+
+    # Connection safety
+    tcp_keepalives_idle = 60
+    tcp_keepalives_interval = 10
+    tcp_keepalives_count = 6
+    idle_in_transaction_session_timeout = 30000
+
+    # Extensions
+    shared_preload_libraries = 'pg_stat_statements'
+    pg_stat_statements.max = 1000
+    pg_stat_statements.track = top
+
+  pg_hba.conf: |
+    # TYPE  DATABASE  USER      ADDRESS          METHOD
+    local   all       postgres                   trust
+    host    all       all       127.0.0.1/32     scram-sha-256
+    host    all       all       10.42.0.0/16     scram-sha-256
+    host    all       all       0.0.0.0/0        reject
+
+  init.sh: |
+    #!/bin/bash
+    set -e
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+        CREATE EXTENSION IF NOT EXISTS vector;
+        CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+    EOSQL

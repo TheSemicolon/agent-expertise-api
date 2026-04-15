@@ -1,0 +1,47 @@
+using System.Security.Claims;
+using System.Text.Encodings.Web;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.Extensions.Options;
+
+namespace ExpertiseApi.Auth;
+
+public class ApiKeyAuthHandler(
+    IOptionsMonitor<AuthenticationSchemeOptions> options,
+    ILoggerFactory logger,
+    UrlEncoder encoder,
+    IConfiguration configuration)
+    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+{
+    public const string SchemeName = "ApiKey";
+
+    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+    {
+        var expectedKey = configuration["Auth:ApiKey"];
+        if (string.IsNullOrEmpty(expectedKey))
+            return Task.FromResult(AuthenticateResult.Fail("API key not configured"));
+
+        if (!Request.Headers.TryGetValue("Authorization", out var authHeader))
+            return Task.FromResult(AuthenticateResult.Fail("Missing Authorization header"));
+
+        var header = authHeader.ToString();
+        if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            return Task.FromResult(AuthenticateResult.Fail("Invalid Authorization scheme"));
+
+        var providedKey = header["Bearer ".Length..].Trim();
+        if (!string.Equals(providedKey, expectedKey, StringComparison.Ordinal))
+            return Task.FromResult(AuthenticateResult.Fail("Invalid API key"));
+
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.Name, "api-client"),
+            new Claim(AuthConstants.ScopeClaimType, AuthConstants.ReadScope),
+            new Claim(AuthConstants.ScopeClaimType, AuthConstants.WriteScope)
+        };
+
+        var identity = new ClaimsIdentity(claims, SchemeName);
+        var principal = new ClaimsPrincipal(identity);
+        var ticket = new AuthenticationTicket(principal, SchemeName);
+
+        return Task.FromResult(AuthenticateResult.Success(ticket));
+    }
+}
