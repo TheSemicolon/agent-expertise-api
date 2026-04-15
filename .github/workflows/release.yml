@@ -50,7 +50,7 @@ jobs:
         with:
           images: ghcr.io/thesemicolon/agent-expertise-api
           tags: |
-            type=sha,prefix=,format=short
+            type=sha,prefix=,format=short,priority=300
             type=raw,value=latest,enable=true
 
       - name: Build and push Docker image
@@ -70,4 +70,4 @@ jobs:
           token: ${{ secrets.INFRA_DISPATCH_TOKEN }}
           repository: TheSemicolon/agent-expertise-api-infra
           event-type: deploy
-          client-payload: '{"image": "ghcr.io/thesemicolon/agent-expertise-api", "tag": "${{ steps.meta.outputs.version }}"}'
+          client-payload: '{"image_tag": "${{ steps.meta.outputs.version }}"}'
