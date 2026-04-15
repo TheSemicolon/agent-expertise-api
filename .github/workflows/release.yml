@@ -50,7 +50,7 @@ jobs:
         with:
           images: ghcr.io/thesemicolon/agent-expertise-api
           tags: |
-            type=sha,prefix=,format=short
+            type=sha,prefix=,format=short,priority=300
             type=raw,value=latest,enable=true
 
       - name: Build and push Docker image
