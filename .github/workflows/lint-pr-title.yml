@@ -25,6 +25,7 @@ jobs:
             test
             ci
             style
+            perf
           requireScope: false
           subjectPattern: ^[a-z].+[^.]$
           subjectPatternError: |
