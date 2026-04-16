@@ -16,14 +16,15 @@
 
 ## Test Plan
 
-- [ ] Local build passes (`dotnet build`)
-- [ ] Linter clean on changed files
-- [ ] API health check passes after local run
-- [ ] Relevant endpoint(s) tested via curl or Scalar UI
+- [ ] `dotnet test` passes locally (requires Docker for integration tests)
+- [ ] New features and bug fixes include tests
+- [ ] Helm render tests pass (if chart changed): `bash helm/expertise-api/tests/test-render.sh`
+- [ ] Relevant endpoint(s) manually verified via curl or Scalar UI (for API changes)
 
 ## Checklist
 
 - [ ] No secrets or credentials committed
+- [ ] Linter clean on changed files
 - [ ] Database migrations are reversible (if applicable)
 - [ ] API changes are backward-compatible (if applicable)
 - [ ] CLAUDE.md updated (if commands, endpoints, or workflow changed)
