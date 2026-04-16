@@ -40,13 +40,24 @@ SHA256_VOCAB_TXT="07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038
 log() { printf '[download-models] %s\n' "$1"; }
 err() { printf '[download-models] ERROR: %s\n' "$1" >&2; exit 1; }
 
+# Portable SHA-256 computation (macOS ships shasum, not sha256sum).
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    err "No sha256 tool found (need sha256sum or shasum)"
+  fi
+}
+
 # Verify SHA-256 checksum of a file.
 # Args: <file> <expected_sha256>
 verify_checksum() {
   local file="$1" expected="$2"
   local filename="${file##*/}"
   local actual
-  actual=$(sha256sum "${file}" | awk '{print $1}')
+  actual=$(sha256_of "${file}")
   if [[ "${actual}" != "${expected}" ]]; then
     err "${filename} checksum mismatch (expected ${expected}, got ${actual}). Delete the file and re-run, or check if the upstream model changed."
   fi
@@ -71,8 +82,11 @@ download_file() {
   fi
 
   log "Downloading ${display_name}..."
-  curl -fsSL --retry 3 --retry-delay 5 "${url}" -o "${dest}" \
-    || err "Failed to download ${filename} from ${url}"
+  local tmpfile
+  tmpfile=$(mktemp "${dest}.XXXXXX")
+  curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors "${url}" -o "${tmpfile}" \
+    || { rm -f "${tmpfile}"; err "Failed to download ${filename} from ${url}"; }
+  mv "${tmpfile}" "${dest}"
 
   local size
   size=$(wc -c < "${dest}")

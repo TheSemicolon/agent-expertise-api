@@ -28,8 +28,9 @@ builder.Services.AddDbContext<ExpertiseDbContext>(options =>
 builder.Services.AddScoped<IExpertiseRepository, ExpertiseRepository>();
 builder.Services.AddApiKeyAuth();
 
-var modelPath = builder.Configuration["Onnx:ModelPath"] ?? "models/model.onnx";
-var vocabPath = builder.Configuration["Onnx:VocabPath"] ?? "models/vocab.txt";
+var baseDir = AppContext.BaseDirectory;
+var modelPath = builder.Configuration["Onnx:ModelPath"] ?? Path.Combine(baseDir, "models", "model.onnx");
+var vocabPath = builder.Configuration["Onnx:VocabPath"] ?? Path.Combine(baseDir, "models", "vocab.txt");
 
 builder.Services.AddBertOnnxEmbeddingGenerator(modelPath, vocabPath);
 builder.Services.AddScoped<EmbeddingService>();
@@ -51,8 +52,11 @@ app.UseStatusCodePages();
 
 app.UseStaticFiles();
 
-app.MapOpenApi();
-app.MapScalarApiReference();
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+    app.MapScalarApiReference();
+}
 
 app.MapGet("/query", (IWebHostEnvironment env) =>
         Results.File(Path.Combine(env.WebRootPath, "query.html"), "text/html"))

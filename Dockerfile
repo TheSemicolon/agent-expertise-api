@@ -19,7 +19,7 @@ RUN dotnet publish src/ExpertiseApi/ExpertiseApi.csproj \
 
 # ── Migration bundle stage ─────────────────────────────────────────────────────
 FROM build AS bundle
-RUN dotnet tool install --global dotnet-ef
+RUN dotnet tool install --global dotnet-ef --version 10.0.*
 ENV PATH="$PATH:/root/.dotnet/tools"
 
 RUN dotnet ef migrations bundle \

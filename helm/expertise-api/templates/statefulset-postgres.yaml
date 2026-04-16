@@ -11,13 +11,11 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "expertise-api.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: database
+      {{- include "expertise-api.postgresSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "expertise-api.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: database
+        {{- include "expertise-api.postgresSelectorLabels" . | nindent 8 }}
     spec:
       securityContext:
         runAsUser: 999
@@ -73,7 +71,7 @@ spec:
           lifecycle:
             preStop:
               exec:
-                command: ["pg_ctl", "stop", "-m", "fast", "-t", "90"]
+                command: ["pg_ctl", "stop", "-D", "/var/lib/postgresql/data", "-m", "fast", "-t", "90"]
 
         - name: pgbouncer
           image: {{ .Values.pgbouncer.image }}

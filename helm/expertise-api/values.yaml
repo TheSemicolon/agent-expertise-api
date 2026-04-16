@@ -13,6 +13,7 @@ service:
   targetPort: 8080
 
 ingress:
+  enabled: true
   hostname: expertise.example.com
   clusterIssuer: letsencrypt-prod
 
@@ -20,10 +21,20 @@ auth:
   mode: apikey
   secretName: expertise-api-app
 
+api:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
 postgres:
   image: pgvector/pgvector:pg17
   storage: 1Gi
   secretName: expertise-postgres
+  podCidr: "10.42.0.0/16"
   resources:
     requests:
       cpu: 100m

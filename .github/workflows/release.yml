@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -48,7 +48,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
-          images: ghcr.io/thesemicolon/agent-expertise-api
+          images: ghcr.io/${{ github.repository }}
           tags: |
             type=sha,prefix=,format=short,priority=300
             type=raw,value=latest,enable=true

@@ -69,6 +69,7 @@ Single-row `EmbeddingMetadata` table tracks model name, dimensions, and `LastRee
 | GET | `/expertise` | `expertise.read` | Filter by domain, tags, type, severity | `domain`, `tags` (comma-separated), `entryType`, `severity`, `includeDeprecated` |
 | GET | `/expertise/{id}` | `expertise.read` | Single entry | |
 | POST | `/expertise` | `expertise.write` | Create entry (generates embedding) | |
+| POST | `/expertise/batch` | `expertise.write` | Create up to 100 entries (generates embeddings, deduplicates) | Max 100 entries per batch |
 | PATCH | `/expertise/{id}` | `expertise.write` | Update entry (regenerates embedding if title/body changed) | |
 | DELETE | `/expertise/{id}` | `expertise.write` | Soft delete (sets DeprecatedAt) | |
 | GET | `/expertise/search?q=` | `expertise.read` | Keyword full-text search (tsvector) | `includeDeprecated` |
