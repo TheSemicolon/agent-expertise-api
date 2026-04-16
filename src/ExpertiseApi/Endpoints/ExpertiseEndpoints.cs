@@ -152,12 +152,53 @@ public static class ExpertiseEndpoints
             return Results.Json(results.ToList(), statusCode: 207);
 
         // Phase 2: Batch embed — single ONNX call for all valid items
-        var texts = validItems.Select(v => EmbeddingService.BuildInputText(v.Request.Title, v.Request.Body));
-        var embeddings = await embeddingService.GenerateBatchAsync(texts, ct);
-
         // Phase 3: Batch dedup — bulk queries per domain instead of per item
-        var validRequests = validItems.Select(v => v.Request).ToList();
-        var dedupResults = await dedup.CheckBatchAsync(validRequests, embeddings, ct);
+        IReadOnlyList<Vector> embeddings;
+        IReadOnlyList<(bool IsDuplicate, ExpertiseEntry? Existing)> dedupResults;
+
+        try
+        {
+            var texts = validItems.Select(v => EmbeddingService.BuildInputText(v.Request.Title, v.Request.Body));
+            embeddings = await embeddingService.GenerateBatchAsync(texts, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            foreach (var (index, _) in validItems)
+                results[index] = new BatchEntryResult(index, BatchEntryStatus.Failed, null, "Request was cancelled.");
+
+            return Results.Json(results.ToList(), statusCode: 207);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Batch embedding generation failed");
+
+            foreach (var (index, _) in validItems)
+                results[index] = new BatchEntryResult(index, BatchEntryStatus.Failed, null, "Batch could not be processed.");
+
+            return Results.Json(results.ToList(), statusCode: 207);
+        }
+
+        try
+        {
+            var validRequests = validItems.Select(v => v.Request).ToList();
+            dedupResults = await dedup.CheckBatchAsync(validRequests, embeddings, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            foreach (var (index, _) in validItems)
+                results[index] = new BatchEntryResult(index, BatchEntryStatus.Failed, null, "Request was cancelled.");
+
+            return Results.Json(results.ToList(), statusCode: 207);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Batch deduplication failed");
+
+            foreach (var (index, _) in validItems)
+                results[index] = new BatchEntryResult(index, BatchEntryStatus.Failed, null, "Batch could not be processed.");
+
+            return Results.Json(results.ToList(), statusCode: 207);
+        }
 
         // Phase 4: Create non-duplicate entries
         for (var j = 0; j < validItems.Count; j++)
