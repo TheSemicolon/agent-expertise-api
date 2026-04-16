@@ -131,7 +131,8 @@ All endpoints except `/health` and `/query` require `Authorization: Bearer <api-
 | Workflow | Trigger | What it does |
 | -------- | ------- | ------------ |
 | `ci.yml` | PR to main, push to dev | `dotnet build` + `dotnet test` |
-| `release.yml` | Push to main | Download models (cached), Docker build linux/amd64+arm64, push to GHCR |
+| `release.yml` | Push to main | semantic-release version bump + tag, then Docker build linux/amd64+arm64, push to GHCR (only when a new version is released) |
+| `lint-pr-title.yml` | PR to dev | Validates PR title follows Conventional Commits format |
 
 GHCR image: `ghcr.io/thesemicolon/agent-expertise-api` (multi-arch: amd64 + arm64).
 
