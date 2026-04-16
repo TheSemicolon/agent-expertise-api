@@ -125,7 +125,7 @@ public class ExpertiseRepository(ExpertiseDbContext db, ILogger<ExpertiseReposit
 
     public async Task<List<ExpertiseEntry>> FindExactMatchesAsync(string domain, IReadOnlyList<string> titles, CancellationToken ct)
     {
-        var lowerTitles = titles.Select(t => t.ToLower()).ToList();
+        var lowerTitles = titles.Select(t => t.ToLowerInvariant()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         return await db.ExpertiseEntries
             .Where(e => e.DeprecatedAt == null)
             .Where(e => e.Domain == domain)

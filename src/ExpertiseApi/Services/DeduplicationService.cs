@@ -38,6 +38,11 @@ public class DeduplicationService(IExpertiseRepository repo, IOptions<Deduplicat
         IReadOnlyList<Vector> embeddings,
         CancellationToken ct = default)
     {
+        if (embeddings.Count != requests.Count)
+            throw new ArgumentException(
+                $"Embeddings count ({embeddings.Count}) does not match requests count ({requests.Count}).",
+                nameof(embeddings));
+
         var opts = options.Value;
         var results = new (bool IsDuplicate, ExpertiseEntry? Existing)[requests.Count];
 
@@ -57,38 +62,49 @@ public class DeduplicationService(IExpertiseRepository repo, IOptions<Deduplicat
             // Bulk exact-match: one query per domain instead of N
             var titles = items.Select(x => x.Request.Title).ToList();
             var exactMatches = await repo.FindExactMatchesAsync(domain, titles, ct);
-            var matchByTitle = exactMatches
-                .GroupBy(e => e.Title.ToLower())
-                .ToDictionary(g => g.Key, g => g.First());
+
+            // Map title -> list of candidates (OrdinalIgnoreCase) to handle multiple entries sharing the same title
+            var matchesByTitle = exactMatches
+                .GroupBy(e => e.Title, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
             // Bulk semantic: fetch all domain embeddings once, match in memory
             List<ExpertiseEntry>? domainEntries = null;
+            List<float[]>? domainEntryArrays = null;
 
             foreach (var item in items)
             {
-                // Check exact match
-                if (matchByTitle.TryGetValue(item.Request.Title.ToLower(), out var exact)
-                    && exact.Body == item.Request.Body)
+                // Check exact match — any candidate sharing the title whose body also matches
+                if (matchesByTitle.TryGetValue(item.Request.Title, out var candidates))
                 {
-                    results[item.Index] = (true, exact);
-                    continue;
+                    var bodyMatch = candidates.FirstOrDefault(c => c.Body == item.Request.Body);
+                    if (bodyMatch is not null)
+                    {
+                        results[item.Index] = (true, bodyMatch);
+                        continue;
+                    }
                 }
 
                 // Check semantic match in memory
                 domainEntries ??= await repo.FindAllEmbeddingsInDomainAsync(domain, ct);
 
+                // Precompute domain entry arrays once per domain group
+                if (domainEntryArrays is null)
+                    domainEntryArrays = domainEntries.Select(e => e.Embedding!.ToArray()).ToList();
+
+                // Compute query vector once per item
+                var queryVec = item.Embedding.ToArray();
+
                 ExpertiseEntry? nearest = null;
                 double nearestDistance = double.MaxValue;
 
-                foreach (var entry in domainEntries)
+                for (var i = 0; i < domainEntries.Count; i++)
                 {
-                    var a = entry.Embedding!.ToArray();
-                    var b = item.Embedding.ToArray();
-                    var distance = ExpertiseRepository.CosineDistance(a, b);
+                    var distance = ExpertiseRepository.CosineDistance(domainEntryArrays[i], queryVec);
 
                     if (distance is not null && distance.Value <= opts.SemanticThreshold && distance.Value < nearestDistance)
                     {
-                        nearest = entry;
+                        nearest = domainEntries[i];
                         nearestDistance = distance.Value;
                     }
                 }

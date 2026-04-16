@@ -114,6 +114,18 @@ public class DeduplicationServiceTests
     }
 
     [Fact]
+    public async Task CheckBatchAsync_WhenEmbeddingsCountMismatch_ThrowsArgumentException()
+    {
+        var service = CreateService();
+        var requests = new List<CreateExpertiseRequest> { CreateRequest(), CreateRequest(title: "Other") };
+        var vectors = new List<Vector> { _testVector }; // one fewer embedding than requests
+
+        await service.Invoking(s => s.CheckBatchAsync(requests, vectors))
+            .Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("embeddings");
+    }
+
+    [Fact]
     public async Task CheckBatchAsync_WhenDisabled_ReturnsAllNotDuplicate()
     {
         var service = CreateService(enabled: false);
