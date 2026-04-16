@@ -5,7 +5,7 @@ using Pgvector.EntityFrameworkCore;
 
 namespace ExpertiseApi.Data;
 
-public class ExpertiseRepository(ExpertiseDbContext db) : IExpertiseRepository
+public class ExpertiseRepository(ExpertiseDbContext db, ILogger<ExpertiseRepository> logger) : IExpertiseRepository
 {
     public async Task<ExpertiseEntry?> GetByIdAsync(Guid id, CancellationToken ct)
     {
@@ -138,6 +138,27 @@ public class ExpertiseRepository(ExpertiseDbContext db) : IExpertiseRepository
         // Threshold check in memory on the single returned vector to avoid double SQL evaluation
         var a = candidate.Embedding.ToArray();
         var b = queryVector.ToArray();
+        var distance = CosineDistance(a, b);
+
+        if (distance is null)
+        {
+            logger.LogWarning(
+                "Embedding dimension mismatch in domain {Domain}: stored {StoredDim}, query {QueryDim}. Run 'reembed' to regenerate stored embeddings",
+                domain, a.Length, b.Length);
+            return null;
+        }
+
+        return distance.Value <= maxDistance ? candidate : null;
+    }
+
+    /// <summary>
+    /// Computes cosine distance between two vectors. Returns null if dimensions differ.
+    /// </summary>
+    internal static double? CosineDistance(float[] a, float[] b)
+    {
+        if (a.Length != b.Length)
+            return null;
+
         double dot = 0, normA = 0, normB = 0;
         for (var i = 0; i < a.Length; i++)
         {
@@ -145,8 +166,6 @@ public class ExpertiseRepository(ExpertiseDbContext db) : IExpertiseRepository
             normA += a[i] * (double)a[i];
             normB += b[i] * (double)b[i];
         }
-        var distance = 1.0 - dot / (Math.Sqrt(normA) * Math.Sqrt(normB));
-
-        return distance <= maxDistance ? candidate : null;
+        return 1.0 - dot / (Math.Sqrt(normA) * Math.Sqrt(normB));
     }
 }
