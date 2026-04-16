@@ -1,0 +1,156 @@
+using System.Net;
+using System.Text.Json;
+using ExpertiseApi.Data;
+using ExpertiseApi.Models;
+using ExpertiseApi.Tests.Infrastructure;
+using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace ExpertiseApi.Tests.Integration;
+
+[Collection("Postgres")]
+public class ExpertiseEndpointTests : IAsyncLifetime
+{
+    private readonly PostgresFixture _postgres;
+    private ApiFactory _factory = null!;
+    private HttpClient _client = null!;
+
+    public ExpertiseEndpointTests(PostgresFixture postgres) => _postgres = postgres;
+
+    public async Task InitializeAsync()
+    {
+        _factory = new ApiFactory(_postgres.ConnectionString);
+        _client = TestHelpers.CreateAuthenticatedClient(_factory);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+        await db.ExpertiseEntries.ExecuteDeleteAsync();
+    }
+
+    public async Task DisposeAsync()
+    {
+        _client.Dispose();
+        await _factory.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task List_WhenEmpty_ReturnsEmptyArray()
+    {
+        var response = await _client.GetAsync("/expertise");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetArrayLength().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetById_WhenNotFound_Returns404()
+    {
+        var response = await _client.GetAsync($"/expertise/{Guid.NewGuid()}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task GetById_WhenExists_ReturnsEntry()
+    {
+        var seeded = await SeedEntryViaRepo("dotnet", "Test entry");
+
+        var response = await _client.GetAsync($"/expertise/{seeded.Id}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetProperty("id").GetGuid().Should().Be(seeded.Id);
+        json.GetProperty("title").GetString().Should().Be("Test entry");
+    }
+
+    [Fact]
+    public async Task List_WithDomainFilter_ReturnsOnlyMatchingDomain()
+    {
+        await SeedEntryViaRepo("dotnet", "DotNet entry");
+        await SeedEntryViaRepo("kubernetes", "K8s entry");
+
+        var response = await _client.GetAsync("/expertise?domain=dotnet");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetArrayLength().Should().Be(1);
+        json[0].GetProperty("domain").GetString().Should().Be("dotnet");
+    }
+
+    [Fact]
+    public async Task List_WithEntryTypeFilter_ReturnsOnlyMatchingType()
+    {
+        await SeedEntryViaRepo("shared", "Pattern entry", entryType: EntryType.Pattern);
+        await SeedEntryViaRepo("shared", "Caveat entry", entryType: EntryType.Caveat);
+
+        var response = await _client.GetAsync("/expertise?entryType=Caveat");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetArrayLength().Should().Be(1);
+        json[0].GetProperty("entryType").GetString().Should().Be("Caveat");
+    }
+
+    [Fact]
+    public async Task List_ExcludesDeprecatedByDefault()
+    {
+        var entry = await SeedEntryViaRepo("shared", "Active entry");
+        var deprecated = await SeedEntryViaRepo("shared", "Deprecated entry");
+
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IExpertiseRepository>();
+        await repo.SoftDeleteAsync(deprecated.Id);
+
+        var response = await _client.GetAsync("/expertise");
+
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetArrayLength().Should().Be(1);
+        json[0].GetProperty("id").GetGuid().Should().Be(entry.Id);
+    }
+
+    [Fact]
+    public async Task List_IncludesDeprecatedWhenRequested()
+    {
+        await SeedEntryViaRepo("shared", "Active entry");
+        var deprecated = await SeedEntryViaRepo("shared", "Deprecated entry");
+
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IExpertiseRepository>();
+        await repo.SoftDeleteAsync(deprecated.Id);
+
+        var response = await _client.GetAsync("/expertise?includeDeprecated=true");
+
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetArrayLength().Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Delete_WhenExists_Returns204()
+    {
+        var entry = await SeedEntryViaRepo("shared", "To delete");
+
+        var response = await _client.DeleteAsync($"/expertise/{entry.Id}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task Delete_WhenNotFound_Returns404()
+    {
+        var response = await _client.DeleteAsync($"/expertise/{Guid.NewGuid()}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    private async Task<ExpertiseEntry> SeedEntryViaRepo(
+        string domain = "shared",
+        string title = "Test",
+        EntryType entryType = EntryType.Pattern)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IExpertiseRepository>();
+        return await repo.CreateAsync(
+            TestHelpers.SeedEntry(domain: domain, title: title, entryType: entryType));
+    }
+}
