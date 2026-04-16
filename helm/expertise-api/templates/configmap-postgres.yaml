@@ -49,12 +49,12 @@ data:
     # TYPE  DATABASE  USER      ADDRESS          METHOD
     local   all       postgres                   trust
     host    all       all       127.0.0.1/32     scram-sha-256
-    host    all       all       10.42.0.0/16     scram-sha-256
+    host    all       all       {{ .Values.postgres.podCidr }}     scram-sha-256
     host    all       all       0.0.0.0/0        reject
 
   init.sh: |
     #!/bin/bash
-    set -e
+    set -euo pipefail
     psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
         CREATE EXTENSION IF NOT EXISTS vector;
         CREATE EXTENSION IF NOT EXISTS pg_stat_statements;

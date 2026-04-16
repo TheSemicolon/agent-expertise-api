@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
@@ -28,7 +30,9 @@ public class ApiKeyAuthHandler(
             return Task.FromResult(AuthenticateResult.Fail("Invalid Authorization scheme"));
 
         var providedKey = header["Bearer ".Length..].Trim();
-        if (!string.Equals(providedKey, expectedKey, StringComparison.Ordinal))
+        var expectedHash = SHA256.HashData(Encoding.UTF8.GetBytes(expectedKey));
+        var providedHash = SHA256.HashData(Encoding.UTF8.GetBytes(providedKey));
+        if (!CryptographicOperations.FixedTimeEquals(expectedHash, providedHash))
             return Task.FromResult(AuthenticateResult.Fail("Invalid API key"));
 
         var claims = new[]

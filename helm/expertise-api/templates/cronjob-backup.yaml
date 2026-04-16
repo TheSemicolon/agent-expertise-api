@@ -16,6 +16,10 @@ spec:
     spec:
       activeDeadlineSeconds: 3600
       template:
+        metadata:
+          labels:
+            {{- include "expertise-api.labels" . | nindent 12 }}
+            app.kubernetes.io/component: backup
         spec:
           restartPolicy: OnFailure
           containers:

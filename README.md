@@ -8,7 +8,6 @@ Self-hosted .NET 10 REST API for storing and serving expertise entries consumed 
 ## Architecture
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
 flowchart LR
     agents["AI Agents\n(Claude Code, Copilot)"]
     api["expertise-api\n(ASP.NET Core)"]
@@ -42,6 +41,7 @@ flowchart LR
 | GET | `/expertise` | List/filter entries by domain, tags, type, severity |
 | GET | `/expertise/{id}` | Get single entry |
 | POST | `/expertise` | Create entry (generates embedding) |
+| POST | `/expertise/batch` | Create up to 100 entries (generates embeddings, deduplicates) |
 | PATCH | `/expertise/{id}` | Update entry (regenerates embedding if title/body changed) |
 | DELETE | `/expertise/{id}` | Soft delete (sets DeprecatedAt) |
 | GET | `/expertise/search?q=` | Keyword full-text search (tsvector) |
@@ -91,7 +91,7 @@ helm upgrade --install expertise-api ./helm/expertise-api \
 
 Docker images are published to GHCR on every push to `main`:
 
-```
+```text
 ghcr.io/thesemicolon/agent-expertise-api:latest
 ghcr.io/thesemicolon/agent-expertise-api:<short-sha>
 ```

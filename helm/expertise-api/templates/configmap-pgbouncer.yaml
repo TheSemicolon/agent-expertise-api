@@ -22,6 +22,8 @@ data:
     listen_port = 6432
     listen_addr = *
 
+    # auth_query requires the PgBouncer connection user to have pg_shadow access (superuser).
+    # This works because the default POSTGRES_USER created by the postgres image is a superuser.
     auth_type = scram-sha-256
     auth_query = SELECT usename, passwd FROM pg_shadow WHERE usename=$1
     auth_dbname = expertise

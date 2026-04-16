@@ -79,17 +79,25 @@ public class ExpertiseRepository(ExpertiseDbContext db) : IExpertiseRepository
 
     public async Task<List<ExpertiseEntry>> KeywordSearchAsync(string query, bool includeDeprecated, CancellationToken ct)
     {
-        var results = db.ExpertiseEntries
+        if (includeDeprecated)
+        {
+            return await db.ExpertiseEntries
+                .FromSqlInterpolated($"""
+                    SELECT * FROM "ExpertiseEntries"
+                    WHERE "SearchVector" @@ plainto_tsquery('english', {query})
+                    ORDER BY ts_rank("SearchVector", plainto_tsquery('english', {query})) DESC
+                    """)
+                .ToListAsync(ct);
+        }
+
+        return await db.ExpertiseEntries
             .FromSqlInterpolated($"""
                 SELECT * FROM "ExpertiseEntries"
                 WHERE "SearchVector" @@ plainto_tsquery('english', {query})
+                  AND "DeprecatedAt" IS NULL
                 ORDER BY ts_rank("SearchVector", plainto_tsquery('english', {query})) DESC
-                """);
-
-        if (!includeDeprecated)
-            results = results.Where(e => e.DeprecatedAt == null);
-
-        return await results.ToListAsync(ct);
+                """)
+            .ToListAsync(ct);
     }
 
     public async Task<List<ExpertiseEntry>> SemanticSearchAsync(Vector queryVector, int limit, bool includeDeprecated, CancellationToken ct)
