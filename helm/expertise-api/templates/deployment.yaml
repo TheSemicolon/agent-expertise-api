@@ -17,9 +17,9 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
+        runAsUser: 1654
+        runAsGroup: 1654
+        fsGroup: 1654
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -46,6 +46,8 @@ spec:
               value: "models/vocab.txt"
             - name: TMPDIR
               value: /tmp
+            - name: DOTNET_EnableDiagnostics
+              value: "0"
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
           volumeMounts:
