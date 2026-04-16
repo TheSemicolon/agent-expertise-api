@@ -32,7 +32,10 @@ var baseDir = AppContext.BaseDirectory;
 var modelPath = builder.Configuration["Onnx:ModelPath"] ?? Path.Combine(baseDir, "models", "model.onnx");
 var vocabPath = builder.Configuration["Onnx:VocabPath"] ?? Path.Combine(baseDir, "models", "vocab.txt");
 
-builder.Services.AddBertOnnxEmbeddingGenerator(modelPath, vocabPath);
+if (File.Exists(modelPath) && File.Exists(vocabPath))
+{
+    builder.Services.AddBertOnnxEmbeddingGenerator(modelPath, vocabPath);
+}
 builder.Services.AddScoped<EmbeddingService>();
 
 builder.Services.Configure<DeduplicationOptions>(
@@ -72,3 +75,5 @@ app.MapSearchEndpoints();
 app.MapSemanticSearchEndpoints();
 
 app.Run();
+
+public partial class Program;
