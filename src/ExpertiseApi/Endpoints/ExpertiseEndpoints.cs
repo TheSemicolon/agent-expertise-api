@@ -59,6 +59,12 @@ public static class ExpertiseEndpoints
         return entry is null ? Results.NotFound() : Results.Ok(entry);
     }
 
+    private static bool IsRequestValid(CreateExpertiseRequest request) =>
+        !string.IsNullOrWhiteSpace(request.Domain) &&
+        !string.IsNullOrWhiteSpace(request.Title) &&
+        !string.IsNullOrWhiteSpace(request.Body) &&
+        !string.IsNullOrWhiteSpace(request.Source);
+
     private static async Task<IResult> CreateEntry(
         CreateExpertiseRequest request,
         IExpertiseRepository repo,
@@ -66,6 +72,9 @@ public static class ExpertiseEndpoints
         DeduplicationService dedup,
         CancellationToken ct)
     {
+        if (!IsRequestValid(request))
+            return Results.Problem("Domain, Title, Body, and Source are required.", statusCode: 400);
+
         var embedding = await embeddingService.GenerateEmbeddingAsync(
             EmbeddingService.BuildInputText(request.Title, request.Body), ct);
 
@@ -124,54 +133,109 @@ public static class ExpertiseEndpoints
             return Results.Problem($"Batch size exceeds maximum of {MaxBatchSize} entries.", statusCode: 400);
 
         var logger = loggerFactory.CreateLogger("ExpertiseApi.Endpoints.BatchIntake");
-        var results = new List<BatchEntryResult>(requests.Count);
+        var results = new BatchEntryResult[requests.Count];
 
+        // Phase 1: Validate and collect
+        var validItems = new List<(int Index, CreateExpertiseRequest Request)>();
         for (var i = 0; i < requests.Count; i++)
         {
-            var request = requests[i];
-
-            if (string.IsNullOrWhiteSpace(request.Domain) ||
-                string.IsNullOrWhiteSpace(request.Title) ||
-                string.IsNullOrWhiteSpace(request.Body) ||
-                string.IsNullOrWhiteSpace(request.Source))
+            if (!IsRequestValid(requests[i]))
             {
-                results.Add(new BatchEntryResult(i, BatchEntryStatus.Rejected, null,
-                    "Domain, Title, Body, and Source are required."));
+                results[i] = new BatchEntryResult(i, BatchEntryStatus.Rejected, null,
+                    "Domain, Title, Body, and Source are required.");
+                continue;
+            }
+            validItems.Add((i, requests[i]));
+        }
+
+        if (validItems.Count == 0)
+            return Results.Json(results.ToList(), statusCode: 207);
+
+        // Phase 2: Batch embed — single ONNX call for all valid items
+        // Phase 3: Batch dedup — bulk queries per domain instead of per item
+        IReadOnlyList<Vector> embeddings;
+        IReadOnlyList<(bool IsDuplicate, ExpertiseEntry? Existing)> dedupResults;
+
+        try
+        {
+            var texts = validItems.Select(v => EmbeddingService.BuildInputText(v.Request.Title, v.Request.Body));
+            embeddings = await embeddingService.GenerateBatchAsync(texts, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            foreach (var (index, _) in validItems)
+                results[index] = new BatchEntryResult(index, BatchEntryStatus.Failed, null, "Request was cancelled.");
+
+            return Results.Json(results.ToList(), statusCode: 207);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Batch embedding generation failed");
+
+            foreach (var (index, _) in validItems)
+                results[index] = new BatchEntryResult(index, BatchEntryStatus.Failed, null, "Batch could not be processed.");
+
+            return Results.Json(results.ToList(), statusCode: 207);
+        }
+
+        try
+        {
+            var validRequests = validItems.Select(v => v.Request).ToList();
+            dedupResults = await dedup.CheckBatchAsync(validRequests, embeddings, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            foreach (var (index, _) in validItems)
+                results[index] = new BatchEntryResult(index, BatchEntryStatus.Failed, null, "Request was cancelled.");
+
+            return Results.Json(results.ToList(), statusCode: 207);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Batch deduplication failed");
+
+            foreach (var (index, _) in validItems)
+                results[index] = new BatchEntryResult(index, BatchEntryStatus.Failed, null, "Batch could not be processed.");
+
+            return Results.Json(results.ToList(), statusCode: 207);
+        }
+
+        // Phase 4: Create non-duplicate entries
+        for (var j = 0; j < validItems.Count; j++)
+        {
+            var (index, request) = validItems[j];
+            var embedding = embeddings[j];
+            var (isDuplicate, existing) = dedupResults[j];
+
+            if (isDuplicate && existing is not null)
+            {
+                results[index] = new BatchEntryResult(index, BatchEntryStatus.Duplicate, existing.Id, null);
                 continue;
             }
 
             try
             {
-                var embedding = await embeddingService.GenerateEmbeddingAsync(
-                    EmbeddingService.BuildInputText(request.Title, request.Body), ct);
-
-                var (isDuplicate, existing) = await dedup.CheckAsync(request, embedding, ct);
-                if (isDuplicate && existing is not null)
-                {
-                    results.Add(new BatchEntryResult(i, BatchEntryStatus.Duplicate, existing.Id, null));
-                    continue;
-                }
-
                 var created = await repo.CreateAsync(BuildEntry(request, embedding), ct);
-                results.Add(new BatchEntryResult(i, BatchEntryStatus.Created, created.Id, null));
+                results[index] = new BatchEntryResult(index, BatchEntryStatus.Created, created.Id, null);
             }
             catch (OperationCanceledException)
             {
-                for (var j = i; j < requests.Count; j++)
-                    results.Add(new BatchEntryResult(j, BatchEntryStatus.Failed, null, "Request was cancelled."));
+                for (var k = j; k < validItems.Count; k++)
+                    results[validItems[k].Index] = new BatchEntryResult(validItems[k].Index, BatchEntryStatus.Failed, null, "Request was cancelled.");
                 break;
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Batch entry {Index} failed", i);
-                results.Add(new BatchEntryResult(i, BatchEntryStatus.Failed, null, "Entry could not be created."));
+                logger.LogWarning(ex, "Batch entry {Index} failed", index);
+                results[index] = new BatchEntryResult(index, BatchEntryStatus.Failed, null, "Entry could not be created.");
             }
         }
 
-        var allCreated = results.All(r => r.Status == BatchEntryStatus.Created);
+        var resultList = results.ToList();
+        var allCreated = resultList.All(r => r.Status == BatchEntryStatus.Created);
         return allCreated
-            ? Results.Ok(results)
-            : Results.Json(results, statusCode: 207);
+            ? Results.Ok(resultList)
+            : Results.Json(resultList, statusCode: 207);
     }
 
     private static ExpertiseEntry BuildEntry(CreateExpertiseRequest request, Vector embedding) => new()

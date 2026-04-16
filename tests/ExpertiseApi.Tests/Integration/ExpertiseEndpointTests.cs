@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using ExpertiseApi.Data;
 using ExpertiseApi.Models;
@@ -141,6 +142,24 @@ public class ExpertiseEndpointTests : IAsyncLifetime
         var response = await _client.DeleteAsync($"/expertise/{Guid.NewGuid()}");
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task CreateEntry_WithNullDomain_Returns400()
+    {
+        var payload = new { title = "Test", body = "Test body", entryType = "Pattern", severity = "Info", source = "test" };
+        var response = await _client.PostAsJsonAsync("/expertise", payload);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task CreateEntry_WithWhitespaceTitle_Returns400()
+    {
+        var payload = new { domain = "shared", title = "   ", body = "Test body", entryType = "Pattern", severity = "Info", source = "test" };
+        var response = await _client.PostAsJsonAsync("/expertise", payload);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     private async Task<ExpertiseEntry> SeedEntryViaRepo(
