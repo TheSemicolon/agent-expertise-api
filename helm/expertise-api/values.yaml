@@ -53,6 +53,14 @@ pgbouncer:
       cpu: 200m
       memory: 128Mi
 
+metrics:
+  enabled: false
+  serviceMonitor:
+    namespace: ""
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+
 backup:
   enabled: true
   schedule: "0 2 * * *"

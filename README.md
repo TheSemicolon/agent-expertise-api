@@ -47,9 +47,10 @@ flowchart LR
 | GET | `/expertise/search?q=` | Keyword full-text search (tsvector) |
 | GET | `/expertise/search/semantic?q=` | Semantic vector search (pgvector) |
 | GET | `/health` | Liveness probe (no auth required) |
+| GET | `/metrics` | Prometheus scrape endpoint (no auth required) |
 | GET | `/query` | Interactive query page (read-only, no auth to load) |
 
-All endpoints except `/health` and `/query` require `Authorization: Bearer <api-key>`. See [SKILL.md](.claude/skills/expertise-api-design/SKILL.md) for scopes and optional parameters.
+All endpoints except `/health`, `/query`, and `/metrics` require `Authorization: Bearer <api-key>`. See [SKILL.md](.claude/skills/expertise-api-design/SKILL.md) for scopes and optional parameters.
 
 ## Quick Start
 
@@ -95,6 +96,20 @@ Docker images are published to GHCR on every push to `main`:
 ghcr.io/thesemicolon/agent-expertise-api:latest
 ghcr.io/thesemicolon/agent-expertise-api:<short-sha>
 ```
+
+## Testing
+
+The test suite uses xUnit, FluentAssertions, NSubstitute, and [Testcontainers](https://dotnet.testcontainers.org/) (PostgreSQL + pgvector). **Docker must be running** for integration tests.
+
+```bash
+# Run all tests
+dotnet test ExpertiseApi.slnx
+
+# Helm chart render tests
+bash helm/expertise-api/tests/test-render.sh
+```
+
+New features and bug fixes should include tests. See [CLAUDE.md](CLAUDE.md) for test project structure and filtering commands.
 
 ## Documentation
 

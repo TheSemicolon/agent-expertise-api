@@ -8,6 +8,9 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 using Pgvector;
+using Microsoft.Extensions.Logging;
+using Serilog;
+using Serilog.Extensions.Logging;
 
 namespace ExpertiseApi.Tests.Infrastructure;
 
@@ -22,6 +25,13 @@ public class ApiFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        builder.ConfigureLogging(logging =>
+        {
+            logging.ClearProviders();
+            var silentLogger = new LoggerConfiguration().MinimumLevel.Fatal().CreateLogger();
+            logging.AddSerilog(silentLogger, dispose: true);
+        });
+
         builder.ConfigureServices(services =>
         {
             // Replace DbContext with test container connection

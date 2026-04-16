@@ -13,6 +13,8 @@ Self-hosted .NET 10 REST API for storing and serving expertise entries consumed 
 - **EF Core** for data access (repository pattern via `IExpertiseRepository`)
 - **PgBouncer 1.21+** sidecar for connection pooling (transaction mode)
 - **In-process ONNX** embeddings via `Microsoft.SemanticKernel.Connectors.Onnx` (bge-micro-v2, 384-dim)
+- **Serilog** for structured logging (`Serilog.AspNetCore`)
+- **prometheus-net** for Prometheus metrics endpoint (`/metrics`)
 - **OpenAPI** docs via Scalar (`Scalar.AspNetCore`)
 - **Docker Compose** for local dev; **Helm** chart for k8s deployment
 
@@ -37,6 +39,9 @@ dotnet run --project src/ExpertiseApi/ExpertiseApi.csproj
 # EF Core migrations
 dotnet ef migrations add <MigrationName> --project src/ExpertiseApi
 dotnet ef database update --project src/ExpertiseApi
+
+# Run tests (requires Docker for integration tests)
+dotnet test ExpertiseApi.slnx
 
 # Docker Compose local dev stack (database only)
 docker compose -f deploy/local/docker-compose.yml up postgres pgbouncer
@@ -124,7 +129,7 @@ AI agents (Claude Code, GitHub Copilot) consume this API via HTTP with a bearer 
 2. **Create** a new entry when discovering a fix, caveat, or pattern: `POST /expertise`
 3. **Update** an entry when information changes: `PATCH /expertise/{id}`
 
-All endpoints except `/health` and `/query` require `Authorization: Bearer <api-key>`.
+All endpoints except `/health`, `/query`, and `/metrics` require `Authorization: Bearer <api-key>`.
 
 ## CI/CD
 
@@ -135,6 +140,55 @@ All endpoints except `/health` and `/query` require `Authorization: Bearer <api-
 | `lint-pr-title.yml` | PR to dev | Validates PR title follows Conventional Commits format |
 
 GHCR image: `ghcr.io/thesemicolon/agent-expertise-api` (multi-arch: amd64 + arm64).
+
+## Testing
+
+### Test Prerequisites
+
+- **Docker** must be running — integration tests use [Testcontainers](https://dotnet.testcontainers.org/) to spin up a PostgreSQL + pgvector instance per test run.
+- Unit tests run without Docker.
+
+### Commands
+
+```bash
+# Run all tests (unit + integration)
+dotnet test ExpertiseApi.slnx
+
+# Run unit tests only (no Docker required)
+dotnet test ExpertiseApi.slnx --filter "FullyQualifiedName~Unit"
+
+# Run integration tests only
+dotnet test ExpertiseApi.slnx --filter "FullyQualifiedName~Integration"
+
+# Helm chart render tests
+bash helm/expertise-api/tests/test-render.sh
+```
+
+### Test Project Structure
+
+```text
+tests/ExpertiseApi.Tests/
+  Infrastructure/     # Test fixtures, ApiFactory, helpers
+  Unit/               # Fast tests, no external dependencies
+  Integration/        # Full-stack tests via WebApplicationFactory + Testcontainers
+```
+
+### Framework Stack
+
+| Component | Package | Purpose |
+|-----------|---------|---------|
+| Test framework | xUnit | Test runner and assertions |
+| Assertions | FluentAssertions | Readable assertion syntax |
+| Mocking | NSubstitute | Interface mocking (embedding generator, etc.) |
+| Database | Testcontainers.PostgreSql | Disposable PostgreSQL + pgvector container |
+| HTTP testing | Microsoft.AspNetCore.Mvc.Testing | `WebApplicationFactory` for integration tests |
+| Log assertions | Microsoft.Extensions.Diagnostics.Testing | `FakeLogCollector` for verifying log output |
+
+### Test Expectations
+
+- **New features and bug fixes must include tests.** Unit tests for logic, integration tests for endpoint behavior.
+- **Helm chart changes** should be validated with the render test script.
+- CI runs `dotnet test` on every PR and push to `dev`.
 
 ## Architecture & Design
 
