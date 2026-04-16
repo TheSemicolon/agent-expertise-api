@@ -7,10 +7,20 @@ using ExpertiseApi.Endpoints;
 using ExpertiseApi.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.SemanticKernel;
+using Prometheus;
+using Serilog;
 using System.Text.Json.Serialization;
 using Scalar.AspNetCore;
 
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .CreateBootstrapLogger();
+
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Host.UseSerilog((context, services, config) =>
+    config.ReadFrom.Configuration(context.Configuration)
+          .ReadFrom.Services(services));
 
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
@@ -52,6 +62,8 @@ if (ReembedCommand.IsReembedRequested(args))
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+app.UseHttpMetrics();
+app.UseSerilogRequestLogging();
 
 app.UseStaticFiles();
 
@@ -73,7 +85,10 @@ app.MapHealthEndpoints();
 app.MapExpertiseEndpoints();
 app.MapSearchEndpoints();
 app.MapSemanticSearchEndpoints();
+app.MapMetrics().AllowAnonymous();
 
-app.Run();
+try { app.Run(); }
+catch (Exception ex) { Log.Fatal(ex, "Application terminated unexpectedly"); }
+finally { Log.CloseAndFlush(); }
 
 public partial class Program;

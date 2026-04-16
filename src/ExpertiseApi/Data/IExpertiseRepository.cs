@@ -27,5 +27,9 @@ public interface IExpertiseRepository
 
     Task<ExpertiseEntry?> FindExactMatchAsync(string domain, string title, CancellationToken ct = default);
 
+    Task<List<ExpertiseEntry>> FindExactMatchesAsync(string domain, IReadOnlyList<string> titles, CancellationToken ct = default);
+
     Task<ExpertiseEntry?> FindNearestInDomainAsync(string domain, Vector queryVector, double maxDistance, CancellationToken ct = default);
+
+    Task<List<ExpertiseEntry>> FindAllEmbeddingsInDomainAsync(string domain, CancellationToken ct = default);
 }

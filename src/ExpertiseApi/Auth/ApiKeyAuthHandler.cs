@@ -20,20 +20,32 @@ public class ApiKeyAuthHandler(
     {
         var expectedKey = configuration["Auth:ApiKey"];
         if (string.IsNullOrEmpty(expectedKey))
+        {
+            Logger.LogWarning("Authentication failed: {Reason}", "API key not configured on server");
             return Task.FromResult(AuthenticateResult.Fail("API key not configured"));
+        }
 
         if (!Request.Headers.TryGetValue("Authorization", out var authHeader))
+        {
+            Logger.LogWarning("Authentication failed: {Reason}", "missing Authorization header");
             return Task.FromResult(AuthenticateResult.Fail("Missing Authorization header"));
+        }
 
         var header = authHeader.ToString();
         if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            Logger.LogWarning("Authentication failed: {Reason}", "invalid Authorization scheme");
             return Task.FromResult(AuthenticateResult.Fail("Invalid Authorization scheme"));
+        }
 
         var providedKey = header["Bearer ".Length..].Trim();
         var expectedHash = SHA256.HashData(Encoding.UTF8.GetBytes(expectedKey));
         var providedHash = SHA256.HashData(Encoding.UTF8.GetBytes(providedKey));
         if (!CryptographicOperations.FixedTimeEquals(expectedHash, providedHash))
+        {
+            Logger.LogWarning("Authentication failed: {Reason}", "invalid API key");
             return Task.FromResult(AuthenticateResult.Fail("Invalid API key"));
+        }
 
         var claims = new[]
         {

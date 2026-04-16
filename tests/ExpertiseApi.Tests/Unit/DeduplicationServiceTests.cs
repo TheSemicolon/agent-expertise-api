@@ -112,4 +112,89 @@ public class DeduplicationServiceTests
         isDuplicate.Should().BeFalse();
         existing.Should().BeNull();
     }
+
+    [Fact]
+    public async Task CheckBatchAsync_WhenEmbeddingsCountMismatch_ThrowsArgumentException()
+    {
+        var service = CreateService();
+        var requests = new List<CreateExpertiseRequest> { CreateRequest(), CreateRequest(title: "Other") };
+        var vectors = new List<Vector> { _testVector }; // one fewer embedding than requests
+
+        await service.Invoking(s => s.CheckBatchAsync(requests, vectors))
+            .Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("embeddings");
+    }
+
+    [Fact]
+    public async Task CheckBatchAsync_WhenDisabled_ReturnsAllNotDuplicate()
+    {
+        var service = CreateService(enabled: false);
+        var requests = new List<CreateExpertiseRequest> { CreateRequest(), CreateRequest(title: "Other") };
+        var vectors = new List<Vector> { _testVector, _testVector };
+
+        var results = await service.CheckBatchAsync(requests, vectors);
+
+        results.Should().HaveCount(2);
+        results.Should().AllSatisfy(r => r.IsDuplicate.Should().BeFalse());
+    }
+
+    [Fact]
+    public async Task CheckBatchAsync_WithExactMatch_ReturnsDuplicate()
+    {
+        var service = CreateService();
+        var requests = new List<CreateExpertiseRequest> { CreateRequest(body: "Exact body") };
+        var vectors = new List<Vector> { _testVector };
+        var existingEntry = TestHelpers.SeedEntry(title: "Test", body: "Exact body");
+
+        _repo.FindExactMatchesAsync("shared", Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+            .Returns([existingEntry]);
+
+        var results = await service.CheckBatchAsync(requests, vectors);
+
+        results.Should().HaveCount(1);
+        results[0].IsDuplicate.Should().BeTrue();
+        results[0].Existing.Should().Be(existingEntry);
+    }
+
+    [Fact]
+    public async Task CheckBatchAsync_WithNoMatches_ReturnsAllNotDuplicate()
+    {
+        var service = CreateService();
+        var requests = new List<CreateExpertiseRequest> { CreateRequest(), CreateRequest(title: "Other") };
+        var vectors = new List<Vector> { _testVector, _testVector };
+
+        _repo.FindExactMatchesAsync("shared", Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<ExpertiseEntry>());
+        _repo.FindAllEmbeddingsInDomainAsync("shared", Arg.Any<CancellationToken>())
+            .Returns(new List<ExpertiseEntry>());
+
+        var results = await service.CheckBatchAsync(requests, vectors);
+
+        results.Should().HaveCount(2);
+        results.Should().AllSatisfy(r => r.IsDuplicate.Should().BeFalse());
+    }
+
+    [Fact]
+    public async Task CheckBatchAsync_WithMixedResults_ReturnsCorrectPerItem()
+    {
+        var service = CreateService();
+        var requests = new List<CreateExpertiseRequest>
+        {
+            CreateRequest(title: "Duplicate", body: "Same body"),
+            CreateRequest(title: "Unique", body: "Different body")
+        };
+        var vectors = new List<Vector> { _testVector, _testVector };
+
+        var existingEntry = TestHelpers.SeedEntry(title: "Duplicate", body: "Same body");
+        _repo.FindExactMatchesAsync("shared", Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+            .Returns([existingEntry]);
+        _repo.FindAllEmbeddingsInDomainAsync("shared", Arg.Any<CancellationToken>())
+            .Returns(new List<ExpertiseEntry>());
+
+        var results = await service.CheckBatchAsync(requests, vectors);
+
+        results.Should().HaveCount(2);
+        results[0].IsDuplicate.Should().BeTrue();
+        results[1].IsDuplicate.Should().BeFalse();
+    }
 }

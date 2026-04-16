@@ -123,6 +123,16 @@ public class ExpertiseRepository(ExpertiseDbContext db, ILogger<ExpertiseReposit
             .FirstOrDefaultAsync(ct);
     }
 
+    public async Task<List<ExpertiseEntry>> FindExactMatchesAsync(string domain, IReadOnlyList<string> titles, CancellationToken ct)
+    {
+        var lowerTitles = titles.Select(t => t.ToLowerInvariant()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return await db.ExpertiseEntries
+            .Where(e => e.DeprecatedAt == null)
+            .Where(e => e.Domain == domain)
+            .Where(e => lowerTitles.Contains(e.Title.ToLower()))
+            .ToListAsync(ct);
+    }
+
     public async Task<ExpertiseEntry?> FindNearestInDomainAsync(string domain, Vector queryVector, double maxDistance, CancellationToken ct)
     {
         var candidate = await db.ExpertiseEntries
@@ -149,6 +159,15 @@ public class ExpertiseRepository(ExpertiseDbContext db, ILogger<ExpertiseReposit
         }
 
         return distance.Value <= maxDistance ? candidate : null;
+    }
+
+    public async Task<List<ExpertiseEntry>> FindAllEmbeddingsInDomainAsync(string domain, CancellationToken ct)
+    {
+        return await db.ExpertiseEntries
+            .Where(e => e.DeprecatedAt == null)
+            .Where(e => e.Domain == domain)
+            .Where(e => e.Embedding != null)
+            .ToListAsync(ct);
     }
 
     /// <summary>
