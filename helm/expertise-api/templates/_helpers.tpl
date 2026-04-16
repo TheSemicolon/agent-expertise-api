@@ -18,3 +18,13 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 app.kubernetes.io/name: {{ include "expertise-api.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{- define "expertise-api.apiSelectorLabels" -}}
+{{- include "expertise-api.selectorLabels" . }}
+app.kubernetes.io/component: api
+{{- end }}
+
+{{- define "expertise-api.postgresSelectorLabels" -}}
+{{- include "expertise-api.selectorLabels" . }}
+app.kubernetes.io/component: database
+{{- end }}

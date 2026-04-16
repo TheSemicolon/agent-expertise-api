@@ -17,5 +17,4 @@ spec:
       port: 6432
       targetPort: 6432
   selector:
-    {{- include "expertise-api.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: database
+    {{- include "expertise-api.postgresSelectorLabels" . | nindent 4 }}

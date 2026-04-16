@@ -70,8 +70,8 @@ public static class ExpertiseEndpoints
             EmbeddingService.BuildInputText(request.Title, request.Body), ct);
 
         var (isDuplicate, existing) = await dedup.CheckAsync(request, embedding, ct);
-        if (isDuplicate)
-            return Results.Ok(existing);
+        if (isDuplicate && existing is not null)
+            return Results.Conflict(existing);
 
         var created = await repo.CreateAsync(BuildEntry(request, embedding), ct);
         return Results.Created($"/expertise/{created.Id}", created);

@@ -43,6 +43,9 @@ docker compose -f deploy/local/docker-compose.yml up -d postgres pgbouncer
 # 2. Apply migrations
 dotnet ef database update --project src/ExpertiseApi
 
+# 2b. Download ONNX model files (required for embeddings and semantic search)
+./scripts/download-models.sh
+
 # 3. Run the API
 dotnet run --project src/ExpertiseApi
 

@@ -124,7 +124,7 @@ AI agents (Claude Code, GitHub Copilot) consume this API via HTTP with a bearer 
 2. **Create** a new entry when discovering a fix, caveat, or pattern: `POST /expertise`
 3. **Update** an entry when information changes: `PATCH /expertise/{id}`
 
-All endpoints except `/health` require `Authorization: Bearer <api-key>`.
+All endpoints except `/health` and `/query` require `Authorization: Bearer <api-key>`.
 
 ## CI/CD
 

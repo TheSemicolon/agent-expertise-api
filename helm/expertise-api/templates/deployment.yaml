@@ -9,11 +9,11 @@ spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "expertise-api.selectorLabels" . | nindent 6 }}
+      {{- include "expertise-api.apiSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "expertise-api.selectorLabels" . | nindent 8 }}
+        {{- include "expertise-api.apiSelectorLabels" . | nindent 8 }}
     spec:
       securityContext:
         runAsNonRoot: true
@@ -47,12 +47,7 @@ spec:
             - name: TMPDIR
               value: /tmp
           resources:
-            requests:
-              cpu: 100m
-              memory: 256Mi
-            limits:
-              cpu: 500m
-              memory: 512Mi
+            {{- toYaml .Values.api.resources | nindent 12 }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
