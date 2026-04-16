@@ -40,6 +40,8 @@ COPY src/ExpertiseApi/models/ ./models/
 
 RUN test -f models/model.onnx || (echo 'ERROR: Model files missing — run scripts/download-models.sh before building' && exit 1)
 
+RUN chown -R $APP_UID:$APP_UID /app/models/
+
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
