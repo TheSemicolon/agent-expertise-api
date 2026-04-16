@@ -129,7 +129,7 @@ public class ExpertiseRepository(ExpertiseDbContext db, ILogger<ExpertiseReposit
         return await db.ExpertiseEntries
             .Where(e => e.DeprecatedAt == null)
             .Where(e => e.Domain == domain)
-            .Where(e => lowerTitles.Contains(e.Title.ToLower()))
+            .Where(e => lowerTitles.Contains(e.Title.ToLowerInvariant()))
             .ToListAsync(ct);
     }
 

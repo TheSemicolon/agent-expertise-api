@@ -175,6 +175,57 @@ public class DeduplicationServiceTests
     }
 
     [Fact]
+    public async Task CheckBatchAsync_WithSemanticMatch_ReturnsDuplicate()
+    {
+        var service = CreateService();
+        var requests = new List<CreateExpertiseRequest> { CreateRequest(title: "Unique Title") };
+        var vectors = new List<Vector> { _testVector };
+
+        // No exact title match — entry title differs
+        var domainEntry = TestHelpers.SeedEntry(title: "Similar But Different Title");
+        // Use the same vector so cosine distance == 0, well below the 0.10 threshold
+        domainEntry.Embedding = _testVector;
+
+        _repo.FindExactMatchesAsync("shared", Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<ExpertiseEntry>());
+        _repo.FindAllEmbeddingsInDomainAsync("shared", Arg.Any<CancellationToken>())
+            .Returns([domainEntry]);
+
+        var results = await service.CheckBatchAsync(requests, vectors);
+
+        results.Should().HaveCount(1);
+        results[0].IsDuplicate.Should().BeTrue();
+        results[0].Existing.Should().Be(domainEntry);
+    }
+
+    [Fact]
+    public async Task CheckBatchAsync_WithSemanticMatchAboveThreshold_ReturnsNotDuplicate()
+    {
+        var service = CreateService(threshold: 0.01); // very tight threshold
+        var requests = new List<CreateExpertiseRequest> { CreateRequest(title: "Unique Title") };
+
+        // Build a vector that is orthogonal to _testVector (cosine distance == 1)
+        var orthogonalValues = new float[384];
+        orthogonalValues[0] = 1.0f; // all other dims zero — orthogonal to random _testVector
+        var farVector = new Vector(orthogonalValues);
+
+        var vectors = new List<Vector> { farVector };
+
+        var domainEntry = TestHelpers.SeedEntry(title: "Similar But Different Title");
+        domainEntry.Embedding = _testVector; // very different direction
+
+        _repo.FindExactMatchesAsync("shared", Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<ExpertiseEntry>());
+        _repo.FindAllEmbeddingsInDomainAsync("shared", Arg.Any<CancellationToken>())
+            .Returns([domainEntry]);
+
+        var results = await service.CheckBatchAsync(requests, vectors);
+
+        results.Should().HaveCount(1);
+        results[0].IsDuplicate.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task CheckBatchAsync_WithMixedResults_ReturnsCorrectPerItem()
     {
         var service = CreateService();

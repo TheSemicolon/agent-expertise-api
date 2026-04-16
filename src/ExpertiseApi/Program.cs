@@ -62,7 +62,9 @@ if (ReembedCommand.IsReembedRequested(args))
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
-app.UseHttpMetrics();
+var metricsEnabled = app.Configuration.GetValue<bool>("Metrics:Enabled", true);
+if (metricsEnabled)
+    app.UseHttpMetrics();
 app.UseSerilogRequestLogging();
 
 app.UseStaticFiles();
@@ -85,10 +87,15 @@ app.MapHealthEndpoints();
 app.MapExpertiseEndpoints();
 app.MapSearchEndpoints();
 app.MapSemanticSearchEndpoints();
-app.MapMetrics().AllowAnonymous();
+if (metricsEnabled)
+    app.MapMetrics().AllowAnonymous();
 
 try { app.Run(); }
-catch (Exception ex) { Log.Fatal(ex, "Application terminated unexpectedly"); }
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Application terminated unexpectedly");
+    Environment.ExitCode = 1;
+}
 finally { Log.CloseAndFlush(); }
 
 public partial class Program;
