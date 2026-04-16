@@ -160,7 +160,26 @@ public static class ExpertiseEndpoints
         {
             var texts = validItems.Select(v => EmbeddingService.BuildInputText(v.Request.Title, v.Request.Body));
             embeddings = await embeddingService.GenerateBatchAsync(texts, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            foreach (var (index, _) in validItems)
+                results[index] = new BatchEntryResult(index, BatchEntryStatus.Failed, null, "Request was cancelled.");
 
+            return Results.Json(results.ToList(), statusCode: 207);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Batch embedding generation failed");
+
+            foreach (var (index, _) in validItems)
+                results[index] = new BatchEntryResult(index, BatchEntryStatus.Failed, null, "Batch could not be processed.");
+
+            return Results.Json(results.ToList(), statusCode: 207);
+        }
+
+        try
+        {
             var validRequests = validItems.Select(v => v.Request).ToList();
             dedupResults = await dedup.CheckBatchAsync(validRequests, embeddings, ct);
         }
@@ -173,7 +192,7 @@ public static class ExpertiseEndpoints
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Batch embedding or deduplication failed");
+            logger.LogWarning(ex, "Batch deduplication failed");
 
             foreach (var (index, _) in validItems)
                 results[index] = new BatchEntryResult(index, BatchEntryStatus.Failed, null, "Batch could not be processed.");

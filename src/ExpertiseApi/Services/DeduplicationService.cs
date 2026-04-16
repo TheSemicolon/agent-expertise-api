@@ -88,9 +88,12 @@ public class DeduplicationService(IExpertiseRepository repo, IOptions<Deduplicat
                 // Check semantic match in memory
                 domainEntries ??= await repo.FindAllEmbeddingsInDomainAsync(domain, ct);
 
-                // Precompute domain entry arrays once per domain group
+                // Precompute domain entry arrays once per domain group, skipping null embeddings
                 if (domainEntryArrays is null)
+                {
+                    domainEntries = domainEntries.Where(e => e.Embedding != null).ToList();
                     domainEntryArrays = domainEntries.Select(e => e.Embedding!.ToArray()).ToList();
+                }
 
                 // Compute query vector once per item
                 var queryVec = item.Embedding.ToArray();
