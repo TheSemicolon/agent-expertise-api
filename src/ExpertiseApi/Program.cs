@@ -60,6 +60,12 @@ if (ReembedCommand.IsReembedRequested(args))
     return;
 }
 
+if (RehashCommand.IsRehashRequested(args))
+{
+    await RehashCommand.RunAsync(app, args);
+    return;
+}
+
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseHttpMetrics();

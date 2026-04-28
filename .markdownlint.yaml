@@ -3,3 +3,5 @@
 #        80 chars and compact style conflicts with aligned in the same file
 MD013: false
 MD060: false
+# MD041: first-line-heading — disabled because skill files start with YAML frontmatter
+MD041: false

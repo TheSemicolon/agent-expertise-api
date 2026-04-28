@@ -34,4 +34,22 @@ public class ExpertiseEntry
     public DateTime? DeprecatedAt { get; set; }
 
     public NpgsqlTsVector SearchVector { get; set; } = null!;
+
+    public required string Tenant { get; set; }
+
+    public Visibility Visibility { get; set; } = Visibility.Private;
+
+    public required string AuthorPrincipal { get; set; }
+
+    public string? AuthorAgent { get; set; }
+
+    public string? IntegrityHash { get; set; }
+
+    public ReviewState ReviewState { get; set; } = ReviewState.Draft;
+
+    public string? ReviewedBy { get; set; }
+
+    public DateTime? ReviewedAt { get; set; }
+
+    public string? RejectionReason { get; set; }
 }

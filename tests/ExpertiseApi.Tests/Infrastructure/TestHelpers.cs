@@ -44,7 +44,9 @@ public static class TestHelpers
         string body = "Test body content for search indexing",
         EntryType entryType = EntryType.Pattern,
         Severity severity = Severity.Info,
-        string source = "test")
+        string source = "test",
+        string tenant = "test",
+        string authorPrincipal = "test-principal")
     {
         return new ExpertiseEntry
         {
@@ -55,7 +57,9 @@ public static class TestHelpers
             Severity = severity,
             Source = source,
             Tags = ["test"],
-            Embedding = CreateTestVector()
+            Embedding = CreateTestVector(),
+            Tenant = tenant,
+            AuthorPrincipal = authorPrincipal
         };
     }
 
