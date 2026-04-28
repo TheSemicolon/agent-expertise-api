@@ -47,18 +47,54 @@ public class ExpertiseEntry
     public required string Body { get; set; }        // markdown
     public EntryType EntryType { get; set; }
     public Severity Severity { get; set; }
-    public required string Source { get; set; }      // agent id, "human", pipeline name
+    public required string Source { get; set; }      // self-reported — informational only post-rebuild
     public string? SourceVersion { get; set; }       // e.g. "EF Core 10.0.1" — staleness signal
     public Vector? Embedding { get; set; }           // pgvector vector(384), nullable until embedded
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public DateTime? DeprecatedAt { get; set; }      // soft delete
     public NpgsqlTsVector? SearchVector { get; set; } // stored generated tsvector column
+
+    // Secure-rebuild additions (PR 1)
+    public required string Tenant { get; set; }      // owning team; "shared" is first-class
+    public Visibility Visibility { get; set; }       // Private (default) | Shared
+    public required string AuthorPrincipal { get; set; } // OIDC sub of writer, server-set
+    public string? AuthorAgent { get; set; }         // agent name if written by an agent
+    public string? IntegrityHash { get; set; }       // SHA-256 hex; nullable until rehash CLI runs
+    public ReviewState ReviewState { get; set; }     // Draft (default) | Approved | Rejected
+    public string? ReviewedBy { get; set; }
+    public DateTime? ReviewedAt { get; set; }
+    public string? RejectionReason { get; set; }
 }
 
-public enum EntryType { IssueFix, Caveat, Requirement, Pattern }
-public enum Severity  { Info, Warning, Critical }
+public enum EntryType  { IssueFix, Caveat, Requirement, Pattern }
+public enum Severity   { Info, Warning, Critical }
+public enum Visibility { Private, Shared }
+public enum ReviewState { Draft, Approved, Rejected }
+public enum AuditAction { Created, Updated, Approved, Rejected, Deleted }
+
+public class ExpertiseAuditLog
+{
+    public Guid Id { get; set; }
+    public DateTime Timestamp { get; set; }
+    public AuditAction Action { get; set; }
+    public Guid EntryId { get; set; }                // FK to ExpertiseEntries with ON DELETE RESTRICT
+    public required string Tenant { get; set; }
+    public required string Principal { get; set; }
+    public string? Agent { get; set; }
+    public string? BeforeHash { get; set; }
+    public string? AfterHash { get; set; }
+    public string? IpAddress { get; set; }
+}
 ```
+
+Trust decisions are based on `AuthorPrincipal` (token-asserted) and `ReviewState` (gate-enforced) — `Source` is self-reported and informational only post-rebuild.
+
+`IntegrityHash` is SHA-256 over canonical JSON of `{tenant, title, body, entryType, severity}` with alphabetical key order. Computed via `IntegrityHashService.Compute`. The `rehash` CLI command backfills `IntegrityHash` for any entry with a null hash (pre-rebuild rows or rows created before the audit-write path lands).
+
+Indexes on `ExpertiseEntries`: standalone B-tree on `Tenant`; covering composite on `(Tenant, ReviewState)` `INCLUDE (Id, EntryType, Severity)`. Existing GIN on `Tags`, GIN on `SearchVector`, HNSW on `Embedding`, B-tree on `Domain` and `DeprecatedAt`, expression index on `LOWER("Title")` are unchanged.
+
+Indexes on `ExpertiseAuditLogs`: covering composite `(EntryId, Timestamp)` `INCLUDE (Action)`; composite `(Principal, Timestamp)`.
 
 Single-row `EmbeddingMetadata` table tracks model name, dimensions, and `LastReembedAt`.
 
@@ -77,7 +113,10 @@ Single-row `EmbeddingMetadata` table tracks model name, dimensions, and `LastRee
 | GET | `/health` | none | Liveness probe | |
 | GET | `/query` | none | Interactive browser UI for read-only API exploration | |
 
-CLI: `dotnet run --project src/ExpertiseApi -- reembed [--batch-size 50]`
+CLI:
+
+- `dotnet run --project src/ExpertiseApi -- reembed [--batch-size 50]` — regenerate all embeddings.
+- `dotnet run --project src/ExpertiseApi -- rehash [--batch-size 50]` — backfill `IntegrityHash` for entries with a null hash. Idempotent.
 
 ## Authentication
 
@@ -94,7 +133,7 @@ The embedding input text is constructed by `EmbeddingService.BuildInputText(titl
 
 ## Repository Structure
 
-```
+```text
 src/ExpertiseApi/
   Program.cs               # Entry point, service registration, middleware
   wwwroot/                 # Static files — query page UI
@@ -104,7 +143,7 @@ src/ExpertiseApi/
   Migrations/              # EF Core migrations (InitialCreate, AddSearchVector)
   Services/                # EmbeddingService, DeduplicationService
   Auth/                    # ApiKeyAuthHandler, AuthExtensions, AuthConstants
-  Cli/                     # ReembedCommand
+  Cli/                     # ReembedCommand, RehashCommand
   models/                  # ONNX model files (bge-micro-v2) — not committed, needed at runtime
 helm/expertise-api/        # Helm chart (shared templates, generic values)
 deploy/local/              # Docker Compose, .env.example, pgvector init script

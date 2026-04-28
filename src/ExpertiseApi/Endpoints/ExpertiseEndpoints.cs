@@ -248,7 +248,11 @@ public static class ExpertiseEndpoints
         Severity = request.Severity,
         Source = request.Source,
         SourceVersion = request.SourceVersion,
-        Embedding = embedding
+        Embedding = embedding,
+        // Transitional placeholders matching the migration backfill values.
+        // Replaced by TenantContext-derived values once OIDC scaffolding lands.
+        Tenant = "legacy",
+        AuthorPrincipal = "pre-rebuild"
     };
 
     private static async Task<IResult> DeleteEntry(

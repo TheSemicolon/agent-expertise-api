@@ -51,6 +51,10 @@ docker compose -f deploy/local/docker-compose.yml up
 
 # Regenerate all embeddings (CLI command)
 dotnet run --project src/ExpertiseApi -- reembed [--batch-size 50]
+
+# Backfill IntegrityHash for entries created before the secure-rebuild data model
+# (entries with IntegrityHash = NULL). Idempotent — only touches null rows.
+dotnet run --project src/ExpertiseApi -- rehash [--batch-size 50]
 ```
 
 ## Model Download
@@ -171,6 +175,7 @@ tests/ExpertiseApi.Tests/
   Infrastructure/     # Test fixtures, ApiFactory, helpers
   Unit/               # Fast tests, no external dependencies
   Integration/        # Full-stack tests via WebApplicationFactory + Testcontainers
+  Architecture/       # Reflection-based architectural guards (e.g. DbContext encapsulation)
 ```
 
 ### Framework Stack
@@ -190,6 +195,28 @@ tests/ExpertiseApi.Tests/
 - **Helm chart changes** should be validated with the render test script.
 - CI runs `dotnet test` on every PR and push to `dev`.
 
+## Data Model — Secure Rebuild
+
+The `ExpertiseEntry` entity carries the original content fields (`Domain`, `Tags`, `Title`, `Body`, `EntryType`, `Severity`, `Source`, `SourceVersion`, `Embedding`, `CreatedAt`, `UpdatedAt`, `DeprecatedAt`, `SearchVector`) plus the secure-rebuild additions:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `Tenant` | `string`, required, indexed | Owning team. `shared` is a first-class tenant value. Migration backfills `legacy` for pre-rebuild rows; column-level default dropped post-backfill. |
+| `Visibility` | `enum { Private, Shared }` | Stored as string. Defaults to `Private`. Setting `Shared` requires `expertise.write.approve`. |
+| `AuthorPrincipal` | `string`, required | OIDC `sub` of the writer. Server-set. Migration backfills `pre-rebuild`. |
+| `AuthorAgent` | `string?` | Agent name when written via an agent. Distinct from `AuthorPrincipal`. |
+| `IntegrityHash` | `string?` | SHA-256 hex over canonical JSON of `{tenant, title, body, entryType, severity}`. Backfilled by the `rehash` CLI. |
+| `ReviewState` | `enum { Draft, Approved, Rejected }` | Stored as string. Defaults to `Draft`. |
+| `ReviewedBy`, `ReviewedAt`, `RejectionReason` | `string?`, `DateTime?`, `string?` | Approval/rejection metadata, server-set on `/approve` or `/reject` (later PR). |
+
+Indexes added: standalone B-tree on `Tenant`; composite B-tree on `(Tenant, ReviewState)` with `INCLUDE (Id, EntryType, Severity)` covering the hot read path.
+
+A separate **`ExpertiseAuditLog`** table records every state-changing operation: `{Id, Timestamp, Action, EntryId, Tenant, Principal, Agent?, BeforeHash, AfterHash, IpAddress}`. FK to `ExpertiseEntries.Id` with `ON DELETE RESTRICT` (audit must survive entry deletion). Reads are not audited. Indexes on `(EntryId, Timestamp)` and `(Principal, Timestamp)`.
+
+The `ExpertiseDbContext` exposes both as `DbSet<>`. **`IExpertiseRepository` is the only sanctioned consumer of `ExpertiseDbContext` for entry data** — the architectural test in `tests/ExpertiseApi.Tests/Architecture/` enforces this for everything outside `Data/` and `Cli/`. CLI commands (`reembed`, `rehash`) are intentional exceptions because they need cursor-based paging the repository interface does not expose.
+
 ## Architecture & Design
 
-For data model, API surface, authentication, embedding architecture, and known gotchas, see `.claude/skills/expertise-api-design/SKILL.md` (authoritative reference). Use the `expertise-api-owner` agent for design and implementation questions.
+For API surface, authentication, embedding architecture, and known gotchas, see `.claude/skills/expertise-api-design/SKILL.md` (authoritative reference). Use the `expertise-api-owner` agent for design and implementation questions.
+
+For the secure-rebuild design rationale, see `adrs/001-tenancy-model.md`, `adrs/002-multi-idp-oidc.md`, and `adrs/003-scope-split.md`.

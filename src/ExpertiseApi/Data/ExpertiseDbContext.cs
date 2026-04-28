@@ -7,6 +7,7 @@ public class ExpertiseDbContext(DbContextOptions<ExpertiseDbContext> options) : 
 {
     public DbSet<ExpertiseEntry> ExpertiseEntries => Set<ExpertiseEntry>();
     public DbSet<EmbeddingMetadata> EmbeddingMetadata => Set<EmbeddingMetadata>();
+    public DbSet<ExpertiseAuditLog> ExpertiseAuditLogs => Set<ExpertiseAuditLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -42,6 +43,22 @@ public class ExpertiseDbContext(DbContextOptions<ExpertiseDbContext> options) : 
             entity.HasIndex(e => e.Domain);
             entity.HasIndex(e => e.DeprecatedAt);
 
+            entity.Property(e => e.Tenant).IsRequired();
+            entity.HasIndex(e => e.Tenant);
+
+            entity.Property(e => e.Visibility)
+                .HasConversion<string>()
+                .IsRequired();
+
+            entity.Property(e => e.AuthorPrincipal).IsRequired();
+
+            entity.Property(e => e.ReviewState)
+                .HasConversion<string>()
+                .IsRequired();
+
+            entity.HasIndex(e => new { e.Tenant, e.ReviewState })
+                .IncludeProperties(e => new { e.Id, e.EntryType, e.Severity });
+
             entity.HasGeneratedTsVectorColumn(
                 e => e.SearchVector,
                 "english",
@@ -55,6 +72,30 @@ public class ExpertiseDbContext(DbContextOptions<ExpertiseDbContext> options) : 
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.ModelName).IsRequired();
+        });
+
+        modelBuilder.Entity<ExpertiseAuditLog>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(e => e.Timestamp).HasDefaultValueSql("now()");
+
+            entity.Property(e => e.Action)
+                .HasConversion<string>()
+                .IsRequired();
+
+            entity.Property(e => e.Tenant).IsRequired();
+            entity.Property(e => e.Principal).IsRequired();
+
+            entity.HasOne<ExpertiseEntry>()
+                .WithMany()
+                .HasForeignKey(e => e.EntryId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(e => new { e.EntryId, e.Timestamp })
+                .IncludeProperties(e => e.Action);
+
+            entity.HasIndex(e => new { e.Principal, e.Timestamp });
         });
     }
 }
