@@ -1,3 +1,4 @@
+using ExpertiseApi.Auth;
 using ExpertiseApi.Data;
 using ExpertiseApi.Models;
 using ExpertiseApi.Services;
@@ -67,6 +68,7 @@ public static class ExpertiseEndpoints
 
     private static async Task<IResult> CreateEntry(
         CreateExpertiseRequest request,
+        HttpContext httpContext,
         IExpertiseRepository repo,
         EmbeddingService embeddingService,
         DeduplicationService dedup,
@@ -75,6 +77,8 @@ public static class ExpertiseEndpoints
         if (!IsRequestValid(request))
             return Results.Problem("Domain, Title, Body, and Source are required.", statusCode: 400);
 
+        var tenantContext = httpContext.RequireTenantContext();
+
         var embedding = await embeddingService.GenerateEmbeddingAsync(
             EmbeddingService.BuildInputText(request.Title, request.Body), ct);
 
@@ -82,7 +86,7 @@ public static class ExpertiseEndpoints
         if (isDuplicate && existing is not null)
             return Results.Conflict(existing);
 
-        var created = await repo.CreateAsync(BuildEntry(request, embedding), ct);
+        var created = await repo.CreateAsync(BuildEntry(request, embedding, tenantContext), ct);
         return Results.Created($"/expertise/{created.Id}", created);
     }
 
@@ -118,6 +122,7 @@ public static class ExpertiseEndpoints
 
     private static async Task<IResult> CreateBatch(
         List<CreateExpertiseRequest> requests,
+        HttpContext httpContext,
         IExpertiseRepository repo,
         EmbeddingService embeddingService,
         DeduplicationService dedup,
@@ -125,6 +130,7 @@ public static class ExpertiseEndpoints
         CancellationToken ct)
     {
         const int MaxBatchSize = 100;
+        var tenantContext = httpContext.RequireTenantContext();
 
         if (requests is null || requests.Count == 0)
             return Results.Problem("Request body must contain at least one entry.", statusCode: 400);
@@ -215,7 +221,7 @@ public static class ExpertiseEndpoints
 
             try
             {
-                var created = await repo.CreateAsync(BuildEntry(request, embedding), ct);
+                var created = await repo.CreateAsync(BuildEntry(request, embedding, tenantContext), ct);
                 results[index] = new BatchEntryResult(index, BatchEntryStatus.Created, created.Id, null);
             }
             catch (OperationCanceledException)
@@ -238,22 +244,26 @@ public static class ExpertiseEndpoints
             : Results.Json(resultList, statusCode: 207);
     }
 
-    private static ExpertiseEntry BuildEntry(CreateExpertiseRequest request, Vector embedding) => new()
-    {
-        Domain = request.Domain,
-        Tags = request.Tags ?? [],
-        Title = request.Title,
-        Body = request.Body,
-        EntryType = request.EntryType,
-        Severity = request.Severity,
-        Source = request.Source,
-        SourceVersion = request.SourceVersion,
-        Embedding = embedding,
-        // Transitional placeholders matching the migration backfill values.
-        // Replaced by TenantContext-derived values once OIDC scaffolding lands.
-        Tenant = "legacy",
-        AuthorPrincipal = "pre-rebuild"
-    };
+    private static ExpertiseEntry BuildEntry(
+        CreateExpertiseRequest request,
+        Vector embedding,
+        TenantContext tenantContext) => new()
+        {
+            Domain = request.Domain,
+            Tags = request.Tags ?? [],
+            Title = request.Title,
+            Body = request.Body,
+            EntryType = request.EntryType,
+            Severity = request.Severity,
+            Source = request.Source,
+            SourceVersion = request.SourceVersion,
+            Embedding = embedding,
+            Tenant = tenantContext.Tenant!,
+            AuthorPrincipal = tenantContext.Principal.FindFirst("sub")?.Value
+                          ?? tenantContext.Principal.Identity?.Name
+                          ?? "unknown",
+            AuthorAgent = tenantContext.Agent
+        };
 
     private static async Task<IResult> DeleteEntry(
         Guid id,

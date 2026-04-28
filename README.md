@@ -50,7 +50,7 @@ flowchart LR
 | GET | `/metrics` | Prometheus scrape endpoint (no auth required) |
 | GET | `/query` | Interactive query page (read-only, no auth to load) |
 
-All endpoints except `/health`, `/query`, and `/metrics` require `Authorization: Bearer <api-key>`. See [SKILL.md](.claude/skills/expertise-api-design/SKILL.md) for scopes and optional parameters.
+All endpoints except `/health`, `/query`, and `/metrics` require `Authorization: Bearer <token>` — a JWT (`Auth:Mode = Oidc`) or, in Development, an API key or LocalDev token (`Auth:Mode = Hybrid`). See [SKILL.md](.claude/skills/expertise-api-design/SKILL.md) for scopes, modes, and configuration.
 
 ## Quick Start
 
