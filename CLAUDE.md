@@ -161,6 +161,19 @@ Four scopes drive the four authorization policies. The hierarchy is `admin ⊇ a
 
 The legacy `expertise.write` scope is normalized to `expertise.write.draft` during one transition cycle.
 
+### Tenant filtering on reads
+
+Every read path is scoped to `Tenant IN (caller_tenant, "shared") AND ReviewState = Approved`. Cross-tenant reads return 404, never 403, so existence is not disclosed. The filter is layered:
+
+1. **Endpoint** — every read endpoint reads `httpContext.RequireTenantContext()` and passes it to the repository.
+2. **Repository** — every `IExpertiseRepository` method takes a `TenantContext` and applies an explicit `WHERE` clause (primary safeguard per ADR-001).
+3. **EF global query filter** — `HasQueryFilter` on `ExpertiseEntry` reads from `ITenantContextAccessor` as defense-in-depth. When the accessor returns null (CLI / design-time / direct DbContext access in tests) the filter short-circuits and the explicit repository `WHERE` drives correctness.
+4. **CLI bypass** — `reembed` and `rehash` call `IgnoreQueryFilters()` explicitly to operate across all tenants.
+
+`?includeDrafts=true` lifts the `ReviewState = Approved` filter on `GET /expertise`, `GET /expertise/search`, and `GET /expertise/search/semantic` — but requires `expertise.write.approve`. A `read`-only caller passing `includeDrafts=true` gets 403. Tenant scoping always applies regardless of `includeDrafts`.
+
+`?includeDeprecated=true` lifts the `DeprecatedAt IS NULL` filter; tenant scoping still applies.
+
 ### OIDC issuers
 
 `Auth:Oidc:Issuers[]` is an array of per-issuer configs. Each entry:

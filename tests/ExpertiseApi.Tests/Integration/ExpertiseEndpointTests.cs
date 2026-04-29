@@ -101,7 +101,8 @@ public class ExpertiseEndpointTests : IAsyncLifetime
 
         using var scope = _factory.Services.CreateScope();
         var repo = scope.ServiceProvider.GetRequiredService<IExpertiseRepository>();
-        await repo.SoftDeleteAsync(deprecated.Id);
+        // Soft-deleted entry was seeded with tenant "test" — match it on the call.
+        await repo.SoftDeleteAsync(deprecated.Id, TestHelpers.CreateTenantContext(deprecated.Tenant));
 
         var response = await _client.GetAsync("/expertise");
 
@@ -118,7 +119,7 @@ public class ExpertiseEndpointTests : IAsyncLifetime
 
         using var scope = _factory.Services.CreateScope();
         var repo = scope.ServiceProvider.GetRequiredService<IExpertiseRepository>();
-        await repo.SoftDeleteAsync(deprecated.Id);
+        await repo.SoftDeleteAsync(deprecated.Id, TestHelpers.CreateTenantContext(deprecated.Tenant));
 
         var response = await _client.GetAsync("/expertise?includeDeprecated=true");
 
@@ -165,11 +166,13 @@ public class ExpertiseEndpointTests : IAsyncLifetime
     private async Task<ExpertiseEntry> SeedEntryViaRepo(
         string domain = "shared",
         string title = "Test",
-        EntryType entryType = EntryType.Pattern)
+        EntryType entryType = EntryType.Pattern,
+        string tenant = TestHelpers.TestTenant)
     {
         using var scope = _factory.Services.CreateScope();
         var repo = scope.ServiceProvider.GetRequiredService<IExpertiseRepository>();
         return await repo.CreateAsync(
-            TestHelpers.SeedEntry(domain: domain, title: title, entryType: entryType));
+            TestHelpers.SeedEntry(domain: domain, title: title, entryType: entryType, tenant: tenant),
+            TestHelpers.CreateTenantContext(tenant));
     }
 }

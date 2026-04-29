@@ -45,6 +45,8 @@ public class JwtApiFactory : WebApplicationFactory<Program>
         builder.UseSetting("Auth:Oidc:Issuers:0:GroupClaim", "groups");
         builder.UseSetting("Auth:Oidc:Issuers:0:GroupToTenantMapping:group-test", "test");
         builder.UseSetting("Auth:Oidc:Issuers:0:GroupToTenantMapping:group-shared", "shared");
+        // Second tenant for cross-tenant isolation tests.
+        builder.UseSetting("Auth:Oidc:Issuers:0:GroupToTenantMapping:group-other", "other-team");
 
         builder.ConfigureLogging(logging =>
         {

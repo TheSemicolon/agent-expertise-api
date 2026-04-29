@@ -1,7 +1,9 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using ExpertiseApi.Auth;
 using ExpertiseApi.Models;
 using Pgvector;
 
@@ -10,6 +12,33 @@ namespace ExpertiseApi.Tests.Infrastructure;
 public static class TestHelpers
 {
     public const string TestApiKey = "test-api-key-12345";
+    public const string TestTenant = "test";
+
+    /// <summary>
+    /// Builds a <see cref="TenantContext"/> for direct repository calls in tests
+    /// (i.e., outside the HTTP request pipeline). Defaults to read+draft scopes;
+    /// callers that need approve/admin can pass them explicitly.
+    /// </summary>
+    public static TenantContext CreateTenantContext(
+        string tenant = TestTenant,
+        params string[] scopes)
+    {
+        var scopeSet = scopes.Length == 0
+            ? new HashSet<string>(StringComparer.Ordinal)
+            {
+                AuthConstants.ReadScope,
+                AuthConstants.WriteDraftScope
+            }
+            : new HashSet<string>(scopes, StringComparer.Ordinal);
+
+        var identity = new ClaimsIdentity(
+            new[] { new Claim("sub", $"test-{tenant}") }, "Test");
+        return new TenantContext(
+            Tenant: tenant,
+            Principal: new ClaimsPrincipal(identity),
+            Agent: null,
+            Scopes: scopeSet);
+    }
 
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -45,8 +74,9 @@ public static class TestHelpers
         EntryType entryType = EntryType.Pattern,
         Severity severity = Severity.Info,
         string source = "test",
-        string tenant = "test",
-        string authorPrincipal = "test-principal")
+        string tenant = TestTenant,
+        string authorPrincipal = "test-principal",
+        ReviewState reviewState = ReviewState.Approved)
     {
         return new ExpertiseEntry
         {
@@ -59,7 +89,8 @@ public static class TestHelpers
             Tags = ["test"],
             Embedding = CreateTestVector(),
             Tenant = tenant,
-            AuthorPrincipal = authorPrincipal
+            AuthorPrincipal = authorPrincipal,
+            ReviewState = reviewState
         };
     }
 

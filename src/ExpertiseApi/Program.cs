@@ -36,6 +36,7 @@ builder.Services.AddDbContext<ExpertiseDbContext>(options =>
         o => o.UseVector()));
 
 builder.Services.AddScoped<IExpertiseRepository, ExpertiseRepository>();
+builder.Services.AddScoped<ITenantContextAccessor, HttpTenantContextAccessor>();
 builder.Services.AddExpertiseAuth(builder.Configuration, builder.Environment);
 
 var baseDir = AppContext.BaseDirectory;

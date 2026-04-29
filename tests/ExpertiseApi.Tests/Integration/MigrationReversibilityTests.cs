@@ -1,3 +1,4 @@
+using ExpertiseApi.Auth;
 using ExpertiseApi.Data;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
@@ -62,7 +63,7 @@ public class MigrationReversibilityTests : IAsyncLifetime
         var options = new DbContextOptionsBuilder<ExpertiseDbContext>()
             .UseNpgsql(_container.GetConnectionString(), o => o.UseVector())
             .Options;
-        return new ExpertiseDbContext(options);
+        return new ExpertiseDbContext(options, new NoOpTenantContextAccessor());
     }
 
     private static async Task AssertColumnsExist(ExpertiseDbContext db, bool expected)
