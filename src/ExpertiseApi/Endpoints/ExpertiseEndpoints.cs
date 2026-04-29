@@ -18,6 +18,9 @@ public static class ExpertiseEndpoints
         group.MapGet("/", ListEntries)
             .RequireAuthorization("ReadAccess");
 
+        group.MapGet("/drafts", ListDrafts)
+            .RequireAuthorization(AuthConstants.Policies.WriteApproveAccess);
+
         group.MapGet("/{id:guid}", GetEntry)
             .RequireAuthorization("ReadAccess");
 
@@ -33,6 +36,12 @@ public static class ExpertiseEndpoints
         group.MapPost("/batch", CreateBatch)
             .RequireAuthorization("WriteAccess");
 
+        group.MapPost("/{id:guid}/approve", ApproveEntry)
+            .RequireAuthorization(AuthConstants.Policies.WriteApproveAccess);
+
+        group.MapPost("/{id:guid}/reject", RejectEntry)
+            .RequireAuthorization(AuthConstants.Policies.WriteApproveAccess);
+
         return group;
     }
 
@@ -43,20 +52,25 @@ public static class ExpertiseEndpoints
         [FromQuery] string? tags,
         [FromQuery] EntryType? entryType,
         [FromQuery] Severity? severity,
-        [FromQuery] bool includeDrafts = false,
         [FromQuery] bool includeDeprecated = false,
         CancellationToken ct = default)
     {
+        // Reads always default to ReviewState = Approved. Reviewers see drafts and rejected
+        // entries via GET /expertise/drafts (which requires write.approve).
         var tenantContext = httpContext.RequireTenantContext();
-
-        if (includeDrafts && !tenantContext.Scopes.Contains(AuthConstants.WriteApproveScope))
-            return Results.Problem(
-                "?includeDrafts=true requires the expertise.write.approve scope.",
-                statusCode: 403);
-
         var tagList = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
-        var entries = await repo.ListAsync(tenantContext, domain, tagList, entryType, severity, includeDrafts, includeDeprecated, ct);
+        var entries = await repo.ListAsync(tenantContext, domain, tagList, entryType, severity, includeDeprecated, ct);
+        return Results.Ok(entries);
+    }
+
+    private static async Task<IResult> ListDrafts(
+        HttpContext httpContext,
+        IExpertiseRepository repo,
+        CancellationToken ct)
+    {
+        var tenantContext = httpContext.RequireTenantContext();
+        var entries = await repo.ListDraftsAsync(tenantContext, ct);
         return Results.Ok(entries);
     }
 
@@ -285,9 +299,74 @@ public static class ExpertiseEndpoints
         CancellationToken ct)
     {
         var tenantContext = httpContext.RequireTenantContext();
-        var deleted = await repo.SoftDeleteAsync(id, tenantContext, ct);
-        return deleted ? Results.NoContent() : Results.NotFound();
+        var outcome = await repo.SoftDeleteAsync(id, tenantContext, ct);
+        return outcome switch
+        {
+            WriteOutcome.Success => Results.NoContent(),
+            WriteOutcome.NotFound => Results.NotFound(),
+            WriteOutcome.InsufficientScope => Results.Problem(
+                "Soft-deleting a shared entry requires the expertise.write.approve scope.",
+                statusCode: 403),
+            _ => Results.Problem("Unexpected outcome from soft-delete.", statusCode: 500)
+        };
     }
+
+    private static async Task<IResult> ApproveEntry(
+        Guid id,
+        HttpContext httpContext,
+        IExpertiseRepository repo,
+        ApproveExpertiseRequest? request,
+        CancellationToken ct)
+    {
+        var tenantContext = httpContext.RequireTenantContext();
+        var visibility = request?.Visibility ?? Visibility.Private;
+
+        var (outcome, entry) = await repo.ApproveAsync(id, tenantContext, visibility, ct);
+        return outcome switch
+        {
+            WriteOutcome.Success => Results.Ok(entry),
+            WriteOutcome.NotFound => Results.NotFound(),
+            WriteOutcome.InvalidState => Results.Problem(
+                "Entry is not in Draft state and cannot be approved.",
+                statusCode: 409),
+            WriteOutcome.ConcurrentConflict => Results.Problem(
+                "Entry was modified concurrently. Retry.",
+                statusCode: 409),
+            _ => Results.Problem("Unexpected outcome from approve.", statusCode: 500)
+        };
+    }
+
+    private static async Task<IResult> RejectEntry(
+        Guid id,
+        RejectExpertiseRequest request,
+        HttpContext httpContext,
+        IExpertiseRepository repo,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.RejectionReason))
+            return Results.Problem("rejectionReason is required.", statusCode: 400);
+        if (request.RejectionReason.Length > MaxRejectionReasonLength)
+            return Results.Problem(
+                $"rejectionReason exceeds maximum length of {MaxRejectionReasonLength} characters.",
+                statusCode: 400);
+
+        var tenantContext = httpContext.RequireTenantContext();
+        var (outcome, entry) = await repo.RejectAsync(id, tenantContext, request.RejectionReason, ct);
+        return outcome switch
+        {
+            WriteOutcome.Success => Results.Ok(entry),
+            WriteOutcome.NotFound => Results.NotFound(),
+            WriteOutcome.InvalidState => Results.Problem(
+                "Entry is not in Draft state and cannot be rejected.",
+                statusCode: 409),
+            WriteOutcome.ConcurrentConflict => Results.Problem(
+                "Entry was modified concurrently. Retry.",
+                statusCode: 409),
+            _ => Results.Problem("Unexpected outcome from reject.", statusCode: 500)
+        };
+    }
+
+    private const int MaxRejectionReasonLength = 2000;
 }
 
 public enum BatchEntryStatus { Created, Duplicate, Rejected, Failed }
@@ -317,3 +396,7 @@ public record UpdateExpertiseRequest(
     string? Source = null,
     List<string>? Tags = null,
     string? SourceVersion = null);
+
+public record ApproveExpertiseRequest(Visibility? Visibility = null);
+
+public record RejectExpertiseRequest(string RejectionReason);

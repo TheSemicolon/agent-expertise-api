@@ -39,8 +39,8 @@ public class TenantIsolationTests : IAsyncLifetime
 
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
-        await db.ExpertiseEntries.IgnoreQueryFilters()
-            .ExecuteDeleteAsync();
+        await db.ExpertiseAuditLogs.IgnoreQueryFilters().ExecuteDeleteAsync();
+        await db.ExpertiseEntries.IgnoreQueryFilters().ExecuteDeleteAsync();
     }
 
     public async Task DisposeAsync()
@@ -91,21 +91,22 @@ public class TenantIsolationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task List_IncludeDraftsWithoutApproveScope_Returns403()
+    public async Task ListDrafts_WithoutApproveScope_Returns403()
     {
         // _testClient carries read + draft scopes but NOT approve.
         await SeedEntry(tenant: "test", reviewState: ReviewState.Draft);
 
-        var response = await _testClient.GetAsync("/expertise?includeDrafts=true");
+        var response = await _testClient.GetAsync("/expertise/drafts");
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
-    public async Task List_IncludeDraftsWithApproveScope_ReturnsDrafts()
+    public async Task ListDrafts_WithApproveScope_ReturnsDraftsAndRejected()
     {
-        var approved = await SeedEntry(tenant: "test", title: "approved", reviewState: ReviewState.Approved);
-        var draft = await SeedEntry(tenant: "test", title: "draft", reviewState: ReviewState.Draft);
+        await SeedEntry(tenant: "test", title: "approved", reviewState: ReviewState.Approved);
+        await SeedEntry(tenant: "test", title: "draft", reviewState: ReviewState.Draft);
+        await SeedEntry(tenant: "test", title: "rejected", reviewState: ReviewState.Rejected);
 
         var approveToken = JwtTokenMinter.Mint(
             tenant: "test",
@@ -114,11 +115,36 @@ public class TenantIsolationTests : IAsyncLifetime
         using var approveClient = _factory.CreateClient();
         approveClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", approveToken);
 
-        var response = await approveClient.GetAsync("/expertise?includeDrafts=true");
+        var response = await approveClient.GetAsync("/expertise/drafts");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var json = await response.Content.ReadJsonElementAsync();
         json.GetArrayLength().Should().Be(2);
+        var titles = new[] { json[0].GetProperty("title").GetString(), json[1].GetProperty("title").GetString() };
+        titles.Should().Contain("draft");
+        titles.Should().Contain("rejected");
+        titles.Should().NotContain("approved");
+    }
+
+    [Fact]
+    public async Task ListDrafts_DoesNotIncludeOtherTenantOrShared()
+    {
+        await SeedEntry(tenant: "test", title: "own-draft", reviewState: ReviewState.Draft);
+        await SeedEntry(tenant: "shared", title: "shared-draft", reviewState: ReviewState.Draft);
+        await SeedEntry(tenant: "other-team", title: "other-draft", reviewState: ReviewState.Draft);
+
+        var approveToken = JwtTokenMinter.Mint(
+            tenant: "test",
+            scopes: [AuthConstants.ReadScope, AuthConstants.WriteApproveScope],
+            groups: ["group-test"]);
+        using var approveClient = _factory.CreateClient();
+        approveClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", approveToken);
+
+        var response = await approveClient.GetAsync("/expertise/drafts");
+
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetArrayLength().Should().Be(1);
+        json[0].GetProperty("title").GetString().Should().Be("own-draft");
     }
 
     [Fact]

@@ -24,6 +24,7 @@ public class SearchEndpointTests : IAsyncLifetime
 
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+        await db.ExpertiseAuditLogs.ExecuteDeleteAsync();
         await db.ExpertiseEntries.ExecuteDeleteAsync();
     }
 
