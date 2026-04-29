@@ -21,8 +21,7 @@ user-invocable: false
 | Embedding model | `bge-micro-v2` (22.9MB, 384-dim, bundled in Docker image) |
 | Embedding abstraction | `IEmbeddingGenerator<string, Embedding<float>>` (Microsoft.Extensions.AI) |
 | Embedding input | `EmbeddingService.BuildInputText(title, body)` — single source of truth |
-| Auth — personal (current) | Static API key bearer token via `Auth:ApiKey` config |
-| Auth — business (future) | Azure Entra ID — OIDC client_credentials grant (production hardening phase) |
+| Auth | Multi-issuer OIDC (Entra + Authentik) via `JwtBearer` per issuer behind a `Bearer` policy scheme; `ApiKey`/`LocalDev`/`Hybrid` modes for Development only |
 | Tags storage | PostgreSQL `text[]` with GIN index (not JSONB — avoids EF Core 10 `Contains()` bug) |
 | Deployment | k3s — personal and business clusters |
 | Local dev | Docker Compose (not a deployment target) |
@@ -120,10 +119,51 @@ CLI:
 
 ## Authentication
 
-- **Current:** API key auth only. Custom `AuthenticationHandler<>` validating `Bearer` token against `Auth:ApiKey` config. All authenticated clients receive both `expertise.read` and `expertise.write` scopes.
-- **Future (production hardening):** Azure Entra ID OIDC client_credentials flow with per-token scope differentiation via `Auth:Mode` config switch.
-- Scopes enforced via ASP.NET Core authorization policies (`ReadAccess`, `WriteAccess`).
-- Scope claim constants defined in `Auth/AuthConstants.cs`.
+`Auth:Mode` config switch drives scheme registration. `Oidc` is the only mode permitted outside Development; `LocalDev`, `ApiKey`, and `Hybrid` hard-fail on startup in any non-Development environment. `Hybrid` is the default in Development.
+
+### Modes
+
+| Mode | Accepts | Default scheme behavior |
+| --- | --- | --- |
+| `Oidc` | Validated JWT from configured issuers | One named `JwtBearer` scheme per issuer behind a `Bearer` policy scheme that routes by token's `iss` |
+| `LocalDev` | `Bearer dev:{tenant}:{scope1}+{scope2}` ad-hoc tokens | Custom `LocalDevAuthHandler` |
+| `ApiKey` | Legacy static API key via `Auth:ApiKey` | `ApiKeyAuthHandler` (mints `expertise.write.draft` and `expertise.read`) |
+| `Hybrid` | All of the above | Policy scheme routes by token shape: `dev:` → LocalDev; `xxx.yyy.zzz` → JWT (per matching `iss`); else → ApiKey |
+
+### Multi-issuer JWT
+
+`Auth:Oidc:Issuers[]` carries one entry per IdP. Each is registered as its own named `JwtBearer` scheme so audience validation is pinned per issuer (a flat `ValidIssuers`/`ValidAudiences` list would allow cross-issuer audience contamination). The `Bearer` policy scheme uses `ForwardDefaultSelector` to route incoming tokens to the right named scheme.
+
+### Tenant derivation
+
+`OidcIssuerOptions.TenantSource`:
+
+- **`Groups`** — walk the principal's group claims through `GroupToTenantMapping`. Used for delegated flows and Authentik (which emits groups for both flows).
+- **`CompoundRole`** — parse each scope-claim entry as `{tenant}{separator}{scope}` (default separator: `:`). Required for Entra `client_credentials`, which does not emit `groups` for service principals.
+
+### Scope claims
+
+Per-issuer `ScopeClaims[]`:
+
+- Entra: `["scp", "roles"]` — `scp` for delegated, `roles` for `client_credentials`. Both unioned.
+- Authentik: `["scope"]` — RFC 9068 standard.
+
+### Scopes and policies
+
+Four scopes with hierarchical implication (`admin ⊇ approve ⊇ draft ⊇ read`). Scope expansion is precomputed on the principal during `OnTokenValidated` (`JwtTenantContextEvents.ExpandScopeClosure`) — the `ScopeAuthorizationHandler` is then a simple `Contains` check. The legacy `expertise.write` scope is normalized to `expertise.write.draft` for one transition cycle.
+
+| Scope | Policy |
+| --- | --- |
+| `expertise.read` | `ReadAccess` |
+| `expertise.write.draft` | `WriteAccess` |
+| `expertise.write.approve` | `WriteApproveAccess` |
+| `expertise.admin` | `AdminAccess` |
+
+### TenantContext
+
+A `TenantContext { Tenant, Principal, Agent?, Scopes[] }` is built per request and stashed on `HttpContext.Features`. All authentication paths (JWT, ApiKey, LocalDev) populate it. Endpoints read it via `HttpContext.RequireTenantContext()`. Repository methods (PR 3) will require it as an argument.
+
+When the principal authenticates successfully but no tenant maps (e.g. group not in `GroupToTenantMapping`), `TenantContext.Tenant` is `null` and the authorization handler returns 403.
 
 ## Embedding Architecture
 

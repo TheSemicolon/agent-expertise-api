@@ -1,21 +1,201 @@
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
 
 namespace ExpertiseApi.Auth;
 
 public static class AuthExtensions
 {
-    public static IServiceCollection AddApiKeyAuth(this IServiceCollection services)
+    public const string BearerScheme = "Bearer";
+
+    public static IServiceCollection AddExpertiseAuth(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        IHostEnvironment environment)
     {
-        services.AddAuthentication(ApiKeyAuthHandler.SchemeName)
-            .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthHandler>(
+        var mode = ParseAuthMode(configuration["Auth:Mode"], environment);
+        EnforceModeGuard(mode, environment);
+
+        var issuers = LoadIssuers(configuration);
+
+        services.AddHttpContextAccessor();
+        services.AddSingleton<IAuthorizationHandler, ScopeAuthorizationHandler>();
+
+        var authBuilder = services.AddAuthentication(BearerScheme);
+
+        // Always register the policy scheme first so the default scheme exists even if we
+        // only end up registering one inner scheme — keeps endpoint configuration uniform.
+        authBuilder.AddPolicyScheme(BearerScheme, displayName: null, options =>
+        {
+            options.ForwardDefaultSelector = ctx => SelectScheme(ctx, mode, issuers);
+        });
+
+        if (mode is AuthMode.Oidc or AuthMode.Hybrid)
+        {
+            foreach (var issuer in issuers)
+            {
+                RegisterJwtBearer(authBuilder, issuer);
+            }
+        }
+
+        if (mode is AuthMode.LocalDev or AuthMode.Hybrid)
+        {
+            authBuilder.AddScheme<AuthenticationSchemeOptions, LocalDevAuthHandler>(
+                LocalDevAuthHandler.SchemeName, null);
+        }
+
+        if (mode is AuthMode.ApiKey or AuthMode.Hybrid)
+        {
+            authBuilder.AddScheme<AuthenticationSchemeOptions, ApiKeyAuthHandler>(
                 ApiKeyAuthHandler.SchemeName, null);
+        }
 
         services.AddAuthorizationBuilder()
-            .AddPolicy("ReadAccess", policy =>
-                policy.RequireClaim(AuthConstants.ScopeClaimType, AuthConstants.ReadScope))
-            .AddPolicy("WriteAccess", policy =>
-                policy.RequireClaim(AuthConstants.ScopeClaimType, AuthConstants.WriteScope));
+            .AddPolicy(AuthConstants.Policies.ReadAccess, p =>
+                p.AddRequirements(new ScopeRequirement(AuthConstants.ReadScope)))
+            .AddPolicy(AuthConstants.Policies.WriteAccess, p =>
+                p.AddRequirements(new ScopeRequirement(AuthConstants.WriteDraftScope)))
+            .AddPolicy(AuthConstants.Policies.WriteApproveAccess, p =>
+                p.AddRequirements(new ScopeRequirement(AuthConstants.WriteApproveScope)))
+            .AddPolicy(AuthConstants.Policies.AdminAccess, p =>
+                p.AddRequirements(new ScopeRequirement(AuthConstants.AdminScope)));
 
         return services;
+    }
+
+    internal static AuthMode ParseAuthMode(string? value, IHostEnvironment environment)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return environment.IsDevelopment() ? AuthMode.Hybrid : AuthMode.Oidc;
+
+        return Enum.TryParse<AuthMode>(value, ignoreCase: true, out var parsed)
+            ? parsed
+            : throw new InvalidOperationException(
+                $"Auth:Mode '{value}' is not a recognized mode. Valid values: " +
+                $"{string.Join(", ", Enum.GetNames<AuthMode>())}.");
+    }
+
+    internal static void EnforceModeGuard(AuthMode mode, IHostEnvironment environment)
+    {
+        if (mode == AuthMode.Oidc) return;
+        if (environment.IsDevelopment()) return;
+
+        throw new InvalidOperationException(
+            $"Auth:Mode '{mode}' is only permitted when ASPNETCORE_ENVIRONMENT='Development'. " +
+            $"Current environment: '{environment.EnvironmentName}'. " +
+            "Set Auth:Mode to 'Oidc' for non-Development deployments.");
+    }
+
+    internal static IReadOnlyList<OidcIssuerOptions> LoadIssuers(IConfiguration configuration)
+    {
+        var issuers = configuration.GetSection("Auth:Oidc:Issuers")
+            .Get<List<OidcIssuerOptions>>() ?? [];
+
+        // Strip placeholder entries (TODO markers in source-controlled configs) — they would
+        // otherwise fail JwtBearer setup with confusing discovery errors.
+        return issuers
+            .Where(i => !string.IsNullOrWhiteSpace(i.Issuer)
+                        && !i.Issuer.StartsWith("<TODO", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    private static void RegisterJwtBearer(AuthenticationBuilder builder, OidcIssuerOptions issuer)
+    {
+        builder.AddJwtBearer(issuer.Name, options =>
+        {
+            options.Authority = issuer.Issuer;
+            options.Audience = issuer.Audience;
+            options.MapInboundClaims = false; // keep `sub`, `scp`, etc. as-is for parsing
+
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                ValidIssuer = issuer.Issuer,
+                ValidAudiences = [issuer.Audience, .. issuer.AdditionalAudiences],
+                NameClaimType = "sub"
+            };
+
+            options.Events = new JwtBearerEvents
+            {
+                OnTokenValidated = ctx => JwtTenantContextEvents.BuildTenantContext(ctx, issuer)
+            };
+        });
+    }
+
+    private static string SelectScheme(HttpContext ctx, AuthMode mode, IReadOnlyList<OidcIssuerOptions> issuers)
+    {
+        var header = ctx.Request.Headers.Authorization.FirstOrDefault();
+        if (string.IsNullOrEmpty(header) || !header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            return FallbackSchemeForMode(mode, issuers);
+
+        var token = header["Bearer ".Length..].Trim();
+
+        if (token.StartsWith(LocalDevAuthHandler.TokenPrefix, StringComparison.OrdinalIgnoreCase)
+            && (mode is AuthMode.LocalDev or AuthMode.Hybrid))
+        {
+            return LocalDevAuthHandler.SchemeName;
+        }
+
+        // Three dot-delimited base64url segments → JWT. Forward to the matching issuer's
+        // scheme; if no issuer matches the token's `iss`, forward to the first registered
+        // issuer scheme so JwtBearer surfaces a clean 401.
+        if (LooksLikeJwt(token) && (mode is AuthMode.Oidc or AuthMode.Hybrid) && issuers.Count > 0)
+        {
+            try
+            {
+                var handler = new JsonWebTokenHandler();
+                if (handler.CanReadToken(token))
+                {
+                    var parsed = handler.ReadJsonWebToken(token);
+                    var match = issuers.FirstOrDefault(i =>
+                        string.Equals(i.Issuer, parsed.Issuer, StringComparison.Ordinal));
+                    if (match is not null)
+                        return match.Name;
+                }
+            }
+            catch
+            {
+                // Fall through to first scheme; JwtBearer will reject cleanly.
+            }
+            return issuers[0].Name;
+        }
+
+        if (mode is AuthMode.ApiKey or AuthMode.Hybrid)
+            return ApiKeyAuthHandler.SchemeName;
+
+        return FallbackSchemeForMode(mode, issuers);
+    }
+
+    /// <summary>
+    /// Picks a registered scheme to forward to when the request has no recognizable bearer
+    /// shape. Must never return <see cref="BearerScheme"/> — that's the policy scheme name
+    /// itself, which would create an infinite forward loop.
+    /// </summary>
+    private static string FallbackSchemeForMode(AuthMode mode, IReadOnlyList<OidcIssuerOptions> issuers) => mode switch
+    {
+        AuthMode.ApiKey => ApiKeyAuthHandler.SchemeName,
+        AuthMode.LocalDev => LocalDevAuthHandler.SchemeName,
+        AuthMode.Oidc => issuers.Count > 0
+            ? issuers[0].Name
+            : throw new InvalidOperationException(
+                "Auth:Mode=Oidc requires at least one configured Auth:Oidc:Issuers entry."),
+        AuthMode.Hybrid => issuers.Count > 0 ? issuers[0].Name : ApiKeyAuthHandler.SchemeName,
+        _ => throw new InvalidOperationException($"Unknown Auth:Mode '{mode}'.")
+    };
+
+    private static bool LooksLikeJwt(string token)
+    {
+        var dots = 0;
+        foreach (var c in token)
+        {
+            if (c == '.') dots++;
+            if (dots > 2) return false;
+        }
+        return dots == 2;
     }
 }

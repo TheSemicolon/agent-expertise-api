@@ -47,17 +47,40 @@ public class ApiKeyAuthHandler(
             return Task.FromResult(AuthenticateResult.Fail("Invalid API key"));
         }
 
-        var claims = new[]
+        var defaultTenant = configuration["Auth:ApiKeyDefaults:DefaultTenant"] ?? "legacy";
+        var defaultPrincipal = configuration["Auth:ApiKeyDefaults:DefaultPrincipal"] ?? "api-client";
+
+        // Issue the new draft + read scopes; LegacyWriteScope kept for one release cycle so
+        // any caller still configured against the pre-rebuild scope name continues to pass
+        // the WriteAccess policy. Both are normalized to expertise.write.draft via
+        // JwtTenantContextEvents.ExpandScopeClosure.
+        var rawScopes = new[]
         {
-            new Claim(ClaimTypes.Name, "api-client"),
-            new Claim(AuthConstants.ScopeClaimType, AuthConstants.ReadScope),
-            new Claim(AuthConstants.ScopeClaimType, AuthConstants.WriteScope)
+            AuthConstants.ReadScope,
+            AuthConstants.WriteDraftScope,
+            AuthConstants.LegacyWriteScope
         };
+        var expandedScopes = JwtTenantContextEvents.ExpandScopeClosure(rawScopes);
+
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.Name, defaultPrincipal),
+            new("sub", defaultPrincipal)
+        };
+        foreach (var scope in expandedScopes)
+            claims.Add(new Claim(AuthConstants.ScopeClaimType, scope));
 
         var identity = new ClaimsIdentity(claims, SchemeName);
         var principal = new ClaimsPrincipal(identity);
-        var ticket = new AuthenticationTicket(principal, SchemeName);
 
+        var tenantContext = new TenantContext(
+            Tenant: defaultTenant,
+            Principal: principal,
+            Agent: null,
+            Scopes: expandedScopes);
+        Context.SetTenantContext(tenantContext);
+
+        var ticket = new AuthenticationTicket(principal, SchemeName);
         return Task.FromResult(AuthenticateResult.Success(ticket));
     }
 }

@@ -36,7 +36,7 @@ builder.Services.AddDbContext<ExpertiseDbContext>(options =>
         o => o.UseVector()));
 
 builder.Services.AddScoped<IExpertiseRepository, ExpertiseRepository>();
-builder.Services.AddApiKeyAuth();
+builder.Services.AddExpertiseAuth(builder.Configuration, builder.Environment);
 
 var baseDir = AppContext.BaseDirectory;
 var modelPath = builder.Configuration["Onnx:ModelPath"] ?? Path.Combine(baseDir, "models", "model.onnx");

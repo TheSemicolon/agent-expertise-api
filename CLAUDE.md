@@ -91,7 +91,7 @@ dotnet run --project src/ExpertiseApi
 # 4. Verify — health check (no auth required)
 curl http://localhost:5000/health
 
-# 5. Create an entry (requires API key from .env AUTH__APIKEY)
+# 5. Create an entry (under Hybrid mode in Development — accepts the API key from .env)
 curl -X POST http://localhost:5000/expertise \
   -H "Authorization: Bearer dev-api-key-change-me" \
   -H "Content-Type: application/json" \
@@ -133,7 +133,71 @@ AI agents (Claude Code, GitHub Copilot) consume this API via HTTP with a bearer 
 2. **Create** a new entry when discovering a fix, caveat, or pattern: `POST /expertise`
 3. **Update** an entry when information changes: `PATCH /expertise/{id}`
 
-All endpoints except `/health`, `/query`, and `/metrics` require `Authorization: Bearer <api-key>`.
+All endpoints except `/health`, `/query`, and `/metrics` require `Authorization: Bearer <token>`.
+
+## Authentication
+
+`Auth:Mode` config switch governs which authentication scheme(s) are accepted:
+
+| Mode | Tokens accepted | Permitted environments |
+| --- | --- | --- |
+| `Oidc` | Validated JWT from any configured issuer | All — required outside Development |
+| `LocalDev` | Custom dev token `Bearer dev:{tenant}:{scope1}+{scope2}` | Development only |
+| `ApiKey` | Static `Auth:ApiKey` value (legacy) | Development only |
+| `Hybrid` | All of the above | Development only — default |
+
+The startup guard hard-fails if a non-`Oidc` mode is configured outside Development.
+
+### Scopes
+
+Four scopes drive the four authorization policies. The hierarchy is `admin ⊇ approve ⊇ draft ⊇ read` — a token carrying `expertise.admin` satisfies any policy:
+
+| Scope | Policy | Required for |
+| --- | --- | --- |
+| `expertise.read` | `ReadAccess` | All `GET` endpoints |
+| `expertise.write.draft` | `WriteAccess` | `POST`, `PATCH`, `DELETE` (drafts in caller's own tenant) |
+| `expertise.write.approve` | `WriteApproveAccess` | `/approve`, `/reject` (PR 4) |
+| `expertise.admin` | `AdminAccess` | `/audit`, cross-tenant ops (PR 4) |
+
+The legacy `expertise.write` scope is normalized to `expertise.write.draft` during one transition cycle.
+
+### OIDC issuers
+
+`Auth:Oidc:Issuers[]` is an array of per-issuer configs. Each entry:
+
+```jsonc
+{
+  "Name": "Entra",
+  "Issuer": "https://login.microsoftonline.com/{tenant-id}/v2.0",
+  "Audience": "{api-client-id-guid}",
+  "AdditionalAudiences": ["api://expertise-api"],
+  "ScopeClaims": ["scp", "roles"],
+  "TenantSource": "CompoundRole",     // for client_credentials — parses "team:scope"
+  "RoleSeparator": ":",
+  "GroupClaim": "groups",
+  "GroupToTenantMapping": { "<group-id>": "team-alpha" }
+}
+```
+
+Notes:
+
+- **Trailing slash on `Issuer`** must match the `iss` claim byte-exactly. Authentik includes one; Entra v2 does not. Copy from `.well-known/openid-configuration` verbatim.
+- **`TenantSource = "CompoundRole"`** is for Entra `client_credentials` flow, which does not emit `groups` for service principals. Roles are encoded as `{tenant}:{scope}` and parsed at validation time.
+- **`TenantSource = "Groups"`** is for delegated flows (and Authentik). Group claim values are mapped to tenant slugs.
+
+### LocalDev token format
+
+`Bearer dev:{tenant}:{scope1}+{scope2}+...`
+
+Examples:
+
+```text
+Bearer dev:legacy:read
+Bearer dev:team-alpha:draft+read
+Bearer dev:shared:admin
+```
+
+Scope shorthand (`read`, `draft`, `approve`, `admin`) expands to full scope strings; any other value passes through verbatim. The handler is registered only when `Auth:Mode` is `LocalDev` or `Hybrid` AND the environment is Development.
 
 ## CI/CD
 
