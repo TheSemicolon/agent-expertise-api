@@ -62,14 +62,32 @@ builder.Services.AddScoped<DeduplicationService>();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+
+    var configuredCidrs = builder.Configuration
+        .GetSection("ForwardedHeaders:KnownNetworks")
+        .Get<string[]>()?
+        .Where(static cidr => !string.IsNullOrWhiteSpace(cidr))
+        .ToArray();
+
+    // Preserve the framework defaults when no allowlist is configured so only loopback is trusted.
+    if (configuredCidrs is null || configuredCidrs.Length == 0)
+        return;
+
+    var parsedNetworks = new List<System.Net.IPNetwork>(configuredCidrs.Length);
+    foreach (var cidr in configuredCidrs)
+    {
+        if (!System.Net.IPNetwork.TryParse(cidr, out var network))
+            throw new InvalidOperationException(
+                $"Invalid ForwardedHeaders:KnownNetworks CIDR entry '{cidr}'.");
+
+        parsedNetworks.Add(network);
+    }
+
     options.KnownIPNetworks.Clear();
     options.KnownProxies.Clear();
 
-    foreach (var cidr in builder.Configuration.GetSection("ForwardedHeaders:KnownNetworks").Get<string[]>() ?? [])
-    {
-        if (System.Net.IPNetwork.TryParse(cidr, out var network))
-            options.KnownIPNetworks.Add(network);
-    }
+    foreach (var network in parsedNetworks)
+        options.KnownIPNetworks.Add(network);
 });
 
 var app = builder.Build();
