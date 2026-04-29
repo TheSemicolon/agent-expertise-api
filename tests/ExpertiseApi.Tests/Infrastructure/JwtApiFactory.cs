@@ -65,6 +65,9 @@ public class JwtApiFactory : WebApplicationFactory<Program>
                 options.Configuration.SigningKeys.Add(JwtTokenMinter.SigningKey);
                 options.TokenValidationParameters.IssuerSigningKey = JwtTokenMinter.SigningKey;
                 options.MetadataAddress = null!;
+                // Suppress the default ConfigurationManager so no code path can trigger
+                // a metadata fetch on https://test-issuer.local/.
+                options.ConfigurationManager = null;
             });
 
             // Replace DbContext with test container connection.

@@ -66,7 +66,7 @@ public static class JwtTenantContextEvents
         }
     }
 
-    private static (string? Tenant, HashSet<string> Scopes) ParseCompoundRoles(
+    internal static (string? Tenant, HashSet<string> Scopes) ParseCompoundRoles(
         IEnumerable<string> rawScopes,
         string separator)
     {
