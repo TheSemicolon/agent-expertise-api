@@ -132,9 +132,17 @@ public class ExpertiseRepository(
 
     public async Task<ExpertiseEntry> CreateAsync(ExpertiseEntry entry, TenantContext ctx, CancellationToken ct)
     {
-        // Defensive: ensure the entry's Tenant matches the caller's. BuildEntry wires this
-        // from the same TenantContext, but verifying here closes the loop against any
-        // future code path that constructs an entry with a request-supplied tenant.
+        // Defensive invariant: entry.Tenant must match the caller's token-asserted tenant.
+        // BuildEntry always derives Tenant from TenantContext, so this guard cannot trip under
+        // normal operation. It exists to catch any future code path that constructs an
+        // ExpertiseEntry with a caller-supplied tenant bypassing that assertion.
+        //
+        // NOTE: Creating entries with Tenant="shared" via POST /expertise is intentionally
+        // not supported in this design. Cross-tenant sharing is achieved by approving an
+        // entry with Visibility=Shared (POST /expertise/{id}/approve). Allowing write.approve
+        // callers to POST Tenant="shared" directly would produce unapprove-able drafts because
+        // ListDraftsAsync scopes its draft queue to the caller's own tenant and never surfaces
+        // shared entries; those drafts would be permanently stranded.
         var callerTenant = RequireTenant(ctx);
         if (!string.Equals(entry.Tenant, callerTenant, StringComparison.Ordinal))
             throw new InvalidOperationException(

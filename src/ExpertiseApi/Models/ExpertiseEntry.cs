@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
 using NpgsqlTypes;
 using Pgvector;
 
@@ -59,6 +60,8 @@ public class ExpertiseEntry
     /// would both observe <c>ReviewState = Draft</c>; the second <c>SaveChangesAsync</c> throws
     /// <see cref="Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException"/> and the endpoint
     /// returns 409 Conflict instead of silently last-write-wins.
+    /// Not included in API responses — it is an internal EF concurrency mechanism.
     /// </summary>
+    [JsonIgnore]
     public uint Version { get; set; }
 }
