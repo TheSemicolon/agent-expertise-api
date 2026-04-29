@@ -1,9 +1,12 @@
+using ExpertiseApi.Auth;
 using ExpertiseApi.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace ExpertiseApi.Data;
 
-public class ExpertiseDbContext(DbContextOptions<ExpertiseDbContext> options) : DbContext(options)
+public class ExpertiseDbContext(
+    DbContextOptions<ExpertiseDbContext> options,
+    ITenantContextAccessor tenantAccessor) : DbContext(options)
 {
     public DbSet<ExpertiseEntry> ExpertiseEntries => Set<ExpertiseEntry>();
     public DbSet<EmbeddingMetadata> EmbeddingMetadata => Set<EmbeddingMetadata>();
@@ -66,6 +69,17 @@ public class ExpertiseDbContext(DbContextOptions<ExpertiseDbContext> options) : 
 
             entity.HasIndex(e => e.SearchVector)
                 .HasMethod("gin");
+
+            // Defense-in-depth tenant filter. Primary defense lives in IExpertiseRepository
+            // (per ADR-001) — every read method constructs an explicit WHERE from its
+            // TenantContext argument. This filter is the safety net for any future query
+            // that forgets that explicit clause. When the accessor returns null (CLI,
+            // design-time, test direct-context access) the predicate short-circuits and
+            // no filter applies; the explicit repository WHERE then drives correctness.
+            entity.HasQueryFilter(e =>
+                tenantAccessor.Tenant == null ||
+                e.Tenant == tenantAccessor.Tenant ||
+                e.Tenant == "shared");
         });
 
         modelBuilder.Entity<EmbeddingMetadata>(entity =>

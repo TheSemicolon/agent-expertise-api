@@ -37,26 +37,37 @@ public static class ExpertiseEndpoints
     }
 
     private static async Task<IResult> ListEntries(
+        HttpContext httpContext,
         IExpertiseRepository repo,
         [FromQuery] string? domain,
         [FromQuery] string? tags,
         [FromQuery] EntryType? entryType,
         [FromQuery] Severity? severity,
+        [FromQuery] bool includeDrafts = false,
         [FromQuery] bool includeDeprecated = false,
         CancellationToken ct = default)
     {
+        var tenantContext = httpContext.RequireTenantContext();
+
+        if (includeDrafts && !tenantContext.Scopes.Contains(AuthConstants.WriteApproveScope))
+            return Results.Problem(
+                "?includeDrafts=true requires the expertise.write.approve scope.",
+                statusCode: 403);
+
         var tagList = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
-        var entries = await repo.ListAsync(domain, tagList, entryType, severity, includeDeprecated, ct);
+        var entries = await repo.ListAsync(tenantContext, domain, tagList, entryType, severity, includeDrafts, includeDeprecated, ct);
         return Results.Ok(entries);
     }
 
     private static async Task<IResult> GetEntry(
         Guid id,
+        HttpContext httpContext,
         IExpertiseRepository repo,
         CancellationToken ct)
     {
-        var entry = await repo.GetByIdAsync(id, ct);
+        var tenantContext = httpContext.RequireTenantContext();
+        var entry = await repo.GetByIdAsync(id, tenantContext, ct);
         return entry is null ? Results.NotFound() : Results.Ok(entry);
     }
 
@@ -82,24 +93,26 @@ public static class ExpertiseEndpoints
         var embedding = await embeddingService.GenerateEmbeddingAsync(
             EmbeddingService.BuildInputText(request.Title, request.Body), ct);
 
-        var (isDuplicate, existing) = await dedup.CheckAsync(request, embedding, ct);
+        var (isDuplicate, existing) = await dedup.CheckAsync(request, embedding, tenantContext, ct);
         if (isDuplicate && existing is not null)
             return Results.Conflict(existing);
 
-        var created = await repo.CreateAsync(BuildEntry(request, embedding, tenantContext), ct);
+        var created = await repo.CreateAsync(BuildEntry(request, embedding, tenantContext), tenantContext, ct);
         return Results.Created($"/expertise/{created.Id}", created);
     }
 
     private static async Task<IResult> UpdateEntry(
         Guid id,
         UpdateExpertiseRequest request,
+        HttpContext httpContext,
         IExpertiseRepository repo,
         EmbeddingService embeddingService,
         CancellationToken ct)
     {
+        var tenantContext = httpContext.RequireTenantContext();
         var needsReembed = request.Title is not null || request.Body is not null;
 
-        var updated = await repo.UpdateAsync(id, async entry =>
+        var updated = await repo.UpdateAsync(id, tenantContext, async entry =>
         {
             if (request.Domain is not null) entry.Domain = request.Domain;
             if (request.Tags is not null) entry.Tags = request.Tags;
@@ -187,7 +200,7 @@ public static class ExpertiseEndpoints
         try
         {
             var validRequests = validItems.Select(v => v.Request).ToList();
-            dedupResults = await dedup.CheckBatchAsync(validRequests, embeddings, ct);
+            dedupResults = await dedup.CheckBatchAsync(validRequests, embeddings, tenantContext, ct);
         }
         catch (OperationCanceledException)
         {
@@ -221,7 +234,7 @@ public static class ExpertiseEndpoints
 
             try
             {
-                var created = await repo.CreateAsync(BuildEntry(request, embedding, tenantContext), ct);
+                var created = await repo.CreateAsync(BuildEntry(request, embedding, tenantContext), tenantContext, ct);
                 results[index] = new BatchEntryResult(index, BatchEntryStatus.Created, created.Id, null);
             }
             catch (OperationCanceledException)
@@ -267,10 +280,12 @@ public static class ExpertiseEndpoints
 
     private static async Task<IResult> DeleteEntry(
         Guid id,
+        HttpContext httpContext,
         IExpertiseRepository repo,
         CancellationToken ct)
     {
-        var deleted = await repo.SoftDeleteAsync(id, ct);
+        var tenantContext = httpContext.RequireTenantContext();
+        var deleted = await repo.SoftDeleteAsync(id, tenantContext, ct);
         return deleted ? Results.NoContent() : Results.NotFound();
     }
 }

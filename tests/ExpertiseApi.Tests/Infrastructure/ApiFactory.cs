@@ -76,5 +76,9 @@ public class ApiFactory : WebApplicationFactory<Program>
         });
 
         builder.UseSetting("Auth:ApiKey", TestHelpers.TestApiKey);
+        // The API key handler defaults Tenant to "legacy"; align the test client with the
+        // SeedEntry helper's default tenant ("test") so existing tests don't all fail under
+        // the new tenant filter.
+        builder.UseSetting("Auth:ApiKeyDefaults:DefaultTenant", TestHelpers.TestTenant);
     }
 }

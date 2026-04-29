@@ -23,7 +23,10 @@ public static class RehashCommand
 
         while (true)
         {
+            // CLI must process every tenant — bypass the EF tenant query filter explicitly.
+            // See ReembedCommand for rationale.
             var query = db.ExpertiseEntries
+                .IgnoreQueryFilters()
                 .Where(e => e.IntegrityHash == null)
                 .OrderBy(e => e.Id)
                 .AsQueryable();

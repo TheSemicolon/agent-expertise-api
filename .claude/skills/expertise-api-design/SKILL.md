@@ -161,9 +161,19 @@ Four scopes with hierarchical implication (`admin ⊇ approve ⊇ draft ⊇ read
 
 ### TenantContext
 
-A `TenantContext { Tenant, Principal, Agent?, Scopes[] }` is built per request and stashed on `HttpContext.Features`. All authentication paths (JWT, ApiKey, LocalDev) populate it. Endpoints read it via `HttpContext.RequireTenantContext()`. Repository methods (PR 3) will require it as an argument.
+A `TenantContext { Tenant, Principal, Agent?, Scopes[] }` is built per request and stashed on `HttpContext.Features`. All authentication paths (JWT, ApiKey, LocalDev) populate it. Endpoints read it via `HttpContext.RequireTenantContext()`. Per ADR-001 every `IExpertiseRepository` method takes a `TenantContext` argument and constructs explicit `WHERE Tenant IN (ctx.Tenant, "shared") AND ReviewState = Approved` predicates. The default review state filter is lifted by `?includeDrafts=true` only when the caller carries `expertise.write.approve` (otherwise the endpoint returns 403); the tenant filter is unconditional.
 
 When the principal authenticates successfully but no tenant maps (e.g. group not in `GroupToTenantMapping`), `TenantContext.Tenant` is `null` and the authorization handler returns 403.
+
+### Tenant filtering — defense layers
+
+1. **Endpoint** — every protected endpoint reads `httpContext.RequireTenantContext()` and threads it to the repository.
+2. **Repository** — primary safeguard. Each method applies an explicit `WHERE Tenant IN (ctx.Tenant, "shared")`; `GetByIdAsync`, `UpdateAsync`, and `SoftDeleteAsync` use `Where(id) + FirstOrDefaultAsync` rather than `FindAsync` so the filter cannot be bypassed via the EF identity map.
+3. **EF global query filter** — `HasQueryFilter` on `ExpertiseEntry` reads `ITenantContextAccessor.Tenant` (HTTP-backed). Defense-in-depth: when a future query forgets the explicit `WHERE`, this still applies. Short-circuits to no filter when the accessor returns null (CLI / design-time / direct test seeding) — those paths rely on the explicit repository `WHERE` for correctness.
+4. **CLI bypass** — `reembed` and `rehash` commands call `IgnoreQueryFilters()` explicitly so they process every tenant.
+5. **Dedup tenant scoping** — `FindExactMatchAsync`, `FindExactMatchesAsync`, `FindNearestInDomainAsync`, and `FindAllEmbeddingsInDomainAsync` are tenant-scoped so a `409 Conflict` on `POST /expertise` cannot leak another tenant's entry contents in the response body.
+
+Cross-tenant operations return **404, not 403**, on `GET`, `PATCH`, and `DELETE` so existence is not disclosed.
 
 ## Embedding Architecture
 
