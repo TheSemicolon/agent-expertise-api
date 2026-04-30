@@ -9,6 +9,21 @@ updates:
     labels:
       - dependencies
       - nuget
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      ef-core:
+        patterns:
+          - "Microsoft.EntityFrameworkCore*"
+          - "Npgsql.EntityFrameworkCore*"
+          - "Pgvector.EntityFrameworkCore*"
+      aspnet-core:
+        patterns:
+          - "Microsoft.AspNetCore.*"
+      serilog:
+        patterns:
+          - "Serilog.*"
 
   - package-ecosystem: github-actions
     directory: /
@@ -19,6 +34,13 @@ updates:
     labels:
       - dependencies
       - github-actions
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action"
 
   - package-ecosystem: docker
     directory: /
@@ -29,3 +51,6 @@ updates:
     labels:
       - dependencies
       - docker
+    commit-message:
+      prefix: chore
+      include: scope
