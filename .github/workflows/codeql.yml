@@ -39,7 +39,7 @@ jobs:
           restore-keys: nuget-${{ runner.os }}-
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@865f5f5c36632f18690a3d569fa0a764f2da0c3e # v3
+        uses: github/codeql-action/init@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a # v3
         with:
           languages: csharp
           build-mode: manual
@@ -52,6 +52,6 @@ jobs:
         run: dotnet build ExpertiseApi.slnx --configuration Release --no-restore --disable-build-servers
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@865f5f5c36632f18690a3d569fa0a764f2da0c3e # v3
+        uses: github/codeql-action/analyze@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a # v3
         with:
           category: '/language:csharp'
