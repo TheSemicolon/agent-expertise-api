@@ -369,6 +369,72 @@ public class ApprovalWorkflowTests : IAsyncLifetime
         audit.AfterHash.Should().NotBeNullOrEmpty();
         audit.BeforeHash.Should().NotBe(audit.AfterHash);
     }
+
+    [Fact]
+    public async Task Create_SharedEntryByApproveCaller_CreatesAsApproved()
+    {
+        // write.approve callers may specify Tenant="shared" — entry is created directly
+        // as Approved (bypassing the draft queue which only surfaces the caller's own tenant).
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+
+        var response = await approver.PostAsJsonAsync("/expertise", new
+        {
+            domain = "shared",
+            title = "shared-knowledge-direct",
+            body = "authoritative cross-team content",
+            entryType = "Pattern",
+            severity = "Info",
+            source = "test",
+            tenant = "shared"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetProperty("tenant").GetString().Should().Be("shared");
+        json.GetProperty("reviewState").GetString().Should().Be("Approved");
+        json.GetProperty("reviewedBy").GetString().Should().NotBeNullOrEmpty();
+        json.GetProperty("reviewedAt").GetString().Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Create_SharedEntryByDraftCaller_Returns403()
+    {
+        // write.draft-only callers are not allowed to create Tenant="shared" entries.
+        using var writer = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+
+        var response = await writer.PostAsJsonAsync("/expertise", new
+        {
+            domain = "shared",
+            title = "should-be-rejected",
+            body = "draft caller cannot set shared tenant",
+            entryType = "Pattern",
+            severity = "Info",
+            source = "test",
+            tenant = "shared"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Create_WithNonSharedTenantOverride_Returns400()
+    {
+        // Only Tenant="shared" is a valid override — all other tenant values are rejected.
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+
+        var response = await approver.PostAsJsonAsync("/expertise", new
+        {
+            domain = "shared",
+            title = "should-be-rejected",
+            body = "cannot override to arbitrary tenant",
+            entryType = "Pattern",
+            severity = "Info",
+            source = "test",
+            tenant = "other-team"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
 }
 
 [Collection("Postgres")]

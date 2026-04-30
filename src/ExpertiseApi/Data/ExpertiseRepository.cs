@@ -132,19 +132,16 @@ public class ExpertiseRepository(
 
     public async Task<ExpertiseEntry> CreateAsync(ExpertiseEntry entry, TenantContext ctx, CancellationToken ct)
     {
-        // Defensive invariant: entry.Tenant must match the caller's token-asserted tenant.
-        // BuildEntry always derives Tenant from TenantContext, so this guard cannot trip under
-        // normal operation. It exists to catch any future code path that constructs an
-        // ExpertiseEntry with a caller-supplied tenant bypassing that assertion.
-        //
-        // NOTE: Creating entries with Tenant="shared" via POST /expertise is intentionally
-        // not supported in this design. Cross-tenant sharing is achieved by approving an
-        // entry with Visibility=Shared (POST /expertise/{id}/approve). Allowing write.approve
-        // callers to POST Tenant="shared" directly would produce unapprove-able drafts because
-        // ListDraftsAsync scopes its draft queue to the caller's own tenant and never surfaces
-        // shared entries; those drafts would be permanently stranded.
+        // Defensive invariant: entry.Tenant must match the caller's token-asserted tenant,
+        // with one explicit exception: write.approve callers may create Tenant="shared" entries
+        // (which are created directly as Approved — see BuildEntry). BuildEntry always derives
+        // Tenant from TenantContext or a validated request.Tenant, so this guard cannot trip
+        // under normal operation. It exists to catch any future code path that constructs an
+        // ExpertiseEntry with an unvalidated tenant bypassing that assertion.
         var callerTenant = RequireTenant(ctx);
-        if (!string.Equals(entry.Tenant, callerTenant, StringComparison.Ordinal))
+        var isSharedByApprover = string.Equals(entry.Tenant, "shared", StringComparison.Ordinal)
+                              && ctx.Scopes.Contains(AuthConstants.WriteApproveScope);
+        if (!string.Equals(entry.Tenant, callerTenant, StringComparison.Ordinal) && !isSharedByApprover)
             throw new InvalidOperationException(
                 $"Entry tenant '{entry.Tenant}' does not match caller tenant '{callerTenant}'.");
 

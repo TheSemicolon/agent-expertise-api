@@ -104,6 +104,20 @@ public static class ExpertiseEndpoints
 
         var tenantContext = httpContext.RequireTenantContext();
 
+        // Validate optional Tenant override: only "shared" is permitted, and only for write.approve callers.
+        if (request.Tenant is not null)
+        {
+            if (!string.Equals(request.Tenant, "shared", StringComparison.OrdinalIgnoreCase))
+                return Results.Problem(
+                    "Only Tenant=\"shared\" may be specified; all other tenants are server-assigned.",
+                    statusCode: 400);
+
+            if (!tenantContext.Scopes.Contains(AuthConstants.WriteApproveScope))
+                return Results.Problem(
+                    "Creating shared entries requires expertise.write.approve.",
+                    statusCode: 403);
+        }
+
         var embedding = await embeddingService.GenerateEmbeddingAsync(
             EmbeddingService.BuildInputText(request.Title, request.Body), ct);
 
@@ -178,6 +192,25 @@ public static class ExpertiseEndpoints
                     "Domain, Title, Body, and Source are required.");
                 continue;
             }
+
+            // Validate optional Tenant override per item.
+            if (requests[i].Tenant is not null)
+            {
+                if (!string.Equals(requests[i].Tenant, "shared", StringComparison.OrdinalIgnoreCase))
+                {
+                    results[i] = new BatchEntryResult(i, BatchEntryStatus.Rejected, null,
+                        "Only Tenant=\"shared\" may be specified; all other tenants are server-assigned.");
+                    continue;
+                }
+
+                if (!tenantContext.Scopes.Contains(AuthConstants.WriteApproveScope))
+                {
+                    results[i] = new BatchEntryResult(i, BatchEntryStatus.Rejected, null,
+                        "Creating shared entries requires expertise.write.approve.");
+                    continue;
+                }
+            }
+
             validItems.Add((i, requests[i]));
         }
 
@@ -274,7 +307,13 @@ public static class ExpertiseEndpoints
     private static ExpertiseEntry BuildEntry(
         CreateExpertiseRequest request,
         Vector embedding,
-        TenantContext tenantContext) => new()
+        TenantContext tenantContext)
+    {
+        var authorPrincipal = tenantContext.Principal.FindFirst("sub")?.Value
+                          ?? tenantContext.Principal.Identity?.Name
+                          ?? "unknown";
+        var isShared = string.Equals(request.Tenant, "shared", StringComparison.OrdinalIgnoreCase);
+        return new ExpertiseEntry
         {
             Domain = request.Domain,
             Tags = request.Tags ?? [],
@@ -285,12 +324,17 @@ public static class ExpertiseEndpoints
             Source = request.Source,
             SourceVersion = request.SourceVersion,
             Embedding = embedding,
-            Tenant = tenantContext.Tenant!,
-            AuthorPrincipal = tenantContext.Principal.FindFirst("sub")?.Value
-                          ?? tenantContext.Principal.Identity?.Name
-                          ?? "unknown",
-            AuthorAgent = tenantContext.Agent
+            Tenant = request.Tenant ?? tenantContext.Tenant!,
+            AuthorPrincipal = authorPrincipal,
+            AuthorAgent = tenantContext.Agent,
+            // Shared entries bypass the draft queue (which is scoped to the writing tenant
+            // and never surfaces shared drafts). Create them directly as Approved to avoid
+            // a permanently unapprovable stranded draft.
+            ReviewState = isShared ? ReviewState.Approved : ReviewState.Draft,
+            ReviewedBy = isShared ? authorPrincipal : null,
+            ReviewedAt = isShared ? DateTime.UtcNow : null,
         };
+    }
 
     private static async Task<IResult> DeleteEntry(
         Guid id,
@@ -385,7 +429,15 @@ public record CreateExpertiseRequest(
     Severity Severity,
     string Source,
     List<string>? Tags = null,
-    string? SourceVersion = null);
+    string? SourceVersion = null,
+    /// <summary>
+    /// Optional tenant override. Only <c>"shared"</c> is accepted; all other tenants are
+    /// server-assigned from the caller's token. Requires <c>expertise.write.approve</c>.
+    /// Shared entries are created directly as <see cref="ReviewState.Approved"/> to avoid
+    /// stranded drafts (the draft queue is scoped to the writing tenant and never surfaces
+    /// shared entries).
+    /// </summary>
+    string? Tenant = null);
 
 public record UpdateExpertiseRequest(
     string? Domain = null,
