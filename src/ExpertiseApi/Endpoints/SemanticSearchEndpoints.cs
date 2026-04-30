@@ -24,7 +24,6 @@ public static class SemanticSearchEndpoints
         EmbeddingService embeddingService,
         [FromQuery] string q,
         [FromQuery] int limit = 10,
-        [FromQuery] bool includeDrafts = false,
         [FromQuery] bool includeDeprecated = false,
         CancellationToken ct = default)
     {
@@ -32,15 +31,9 @@ public static class SemanticSearchEndpoints
             return Results.Problem("Query parameter 'q' is required.", statusCode: 400);
 
         var tenantContext = httpContext.RequireTenantContext();
-
-        if (includeDrafts && !tenantContext.Scopes.Contains(AuthConstants.WriteApproveScope))
-            return Results.Problem(
-                "?includeDrafts=true requires the expertise.write.approve scope.",
-                statusCode: 403);
-
         var clampedLimit = Math.Clamp(limit, 1, 100);
         var queryVector = await embeddingService.GenerateEmbeddingAsync(q, ct);
-        var results = await repo.SemanticSearchAsync(queryVector, tenantContext, clampedLimit, includeDrafts, includeDeprecated, ct);
+        var results = await repo.SemanticSearchAsync(queryVector, tenantContext, clampedLimit, includeDeprecated, ct);
         return Results.Ok(results);
     }
 }

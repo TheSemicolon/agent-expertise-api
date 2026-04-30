@@ -80,6 +80,16 @@ public class ExpertiseDbContext(
                 tenantAccessor.Tenant == null ||
                 e.Tenant == tenantAccessor.Tenant ||
                 e.Tenant == "shared");
+
+            // PostgreSQL xmin system column as the EF Core concurrency token. The column
+            // already exists on every Postgres table (it's a system column); this
+            // configuration just teaches EF to read it and emit `WHERE xmin = @original`
+            // on UPDATE/DELETE. No schema migration is required for the column itself.
+            entity.Property(e => e.Version)
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .IsRowVersion()
+                .ValueGeneratedOnAddOrUpdate();
         });
 
         modelBuilder.Entity<EmbeddingMetadata>(entity =>

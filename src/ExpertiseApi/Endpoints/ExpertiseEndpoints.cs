@@ -18,6 +18,9 @@ public static class ExpertiseEndpoints
         group.MapGet("/", ListEntries)
             .RequireAuthorization("ReadAccess");
 
+        group.MapGet("/drafts", ListDrafts)
+            .RequireAuthorization(AuthConstants.Policies.WriteApproveAccess);
+
         group.MapGet("/{id:guid}", GetEntry)
             .RequireAuthorization("ReadAccess");
 
@@ -33,6 +36,12 @@ public static class ExpertiseEndpoints
         group.MapPost("/batch", CreateBatch)
             .RequireAuthorization("WriteAccess");
 
+        group.MapPost("/{id:guid}/approve", ApproveEntry)
+            .RequireAuthorization(AuthConstants.Policies.WriteApproveAccess);
+
+        group.MapPost("/{id:guid}/reject", RejectEntry)
+            .RequireAuthorization(AuthConstants.Policies.WriteApproveAccess);
+
         return group;
     }
 
@@ -43,20 +52,25 @@ public static class ExpertiseEndpoints
         [FromQuery] string? tags,
         [FromQuery] EntryType? entryType,
         [FromQuery] Severity? severity,
-        [FromQuery] bool includeDrafts = false,
         [FromQuery] bool includeDeprecated = false,
         CancellationToken ct = default)
     {
+        // Reads always default to ReviewState = Approved. Reviewers see drafts and rejected
+        // entries via GET /expertise/drafts (which requires write.approve).
         var tenantContext = httpContext.RequireTenantContext();
-
-        if (includeDrafts && !tenantContext.Scopes.Contains(AuthConstants.WriteApproveScope))
-            return Results.Problem(
-                "?includeDrafts=true requires the expertise.write.approve scope.",
-                statusCode: 403);
-
         var tagList = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
-        var entries = await repo.ListAsync(tenantContext, domain, tagList, entryType, severity, includeDrafts, includeDeprecated, ct);
+        var entries = await repo.ListAsync(tenantContext, domain, tagList, entryType, severity, includeDeprecated, ct);
+        return Results.Ok(entries);
+    }
+
+    private static async Task<IResult> ListDrafts(
+        HttpContext httpContext,
+        IExpertiseRepository repo,
+        CancellationToken ct)
+    {
+        var tenantContext = httpContext.RequireTenantContext();
+        var entries = await repo.ListDraftsAsync(tenantContext, ct);
         return Results.Ok(entries);
     }
 
@@ -89,6 +103,20 @@ public static class ExpertiseEndpoints
             return Results.Problem("Domain, Title, Body, and Source are required.", statusCode: 400);
 
         var tenantContext = httpContext.RequireTenantContext();
+
+        // Validate optional Tenant override: only "shared" is permitted, and only for write.approve callers.
+        if (request.Tenant is not null)
+        {
+            if (!string.Equals(request.Tenant, "shared", StringComparison.OrdinalIgnoreCase))
+                return Results.Problem(
+                    "Only Tenant=\"shared\" may be specified; all other tenants are server-assigned.",
+                    statusCode: 400);
+
+            if (!tenantContext.Scopes.Contains(AuthConstants.WriteApproveScope))
+                return Results.Problem(
+                    "Creating shared entries requires expertise.write.approve.",
+                    statusCode: 403);
+        }
 
         var embedding = await embeddingService.GenerateEmbeddingAsync(
             EmbeddingService.BuildInputText(request.Title, request.Body), ct);
@@ -164,6 +192,25 @@ public static class ExpertiseEndpoints
                     "Domain, Title, Body, and Source are required.");
                 continue;
             }
+
+            // Validate optional Tenant override per item.
+            if (requests[i].Tenant is not null)
+            {
+                if (!string.Equals(requests[i].Tenant, "shared", StringComparison.OrdinalIgnoreCase))
+                {
+                    results[i] = new BatchEntryResult(i, BatchEntryStatus.Rejected, null,
+                        "Only Tenant=\"shared\" may be specified; all other tenants are server-assigned.");
+                    continue;
+                }
+
+                if (!tenantContext.Scopes.Contains(AuthConstants.WriteApproveScope))
+                {
+                    results[i] = new BatchEntryResult(i, BatchEntryStatus.Rejected, null,
+                        "Creating shared entries requires expertise.write.approve.");
+                    continue;
+                }
+            }
+
             validItems.Add((i, requests[i]));
         }
 
@@ -260,7 +307,13 @@ public static class ExpertiseEndpoints
     private static ExpertiseEntry BuildEntry(
         CreateExpertiseRequest request,
         Vector embedding,
-        TenantContext tenantContext) => new()
+        TenantContext tenantContext)
+    {
+        var authorPrincipal = tenantContext.Principal.FindFirst("sub")?.Value
+                          ?? tenantContext.Principal.Identity?.Name
+                          ?? "unknown";
+        var isShared = string.Equals(request.Tenant, "shared", StringComparison.OrdinalIgnoreCase);
+        return new ExpertiseEntry
         {
             Domain = request.Domain,
             Tags = request.Tags ?? [],
@@ -271,12 +324,17 @@ public static class ExpertiseEndpoints
             Source = request.Source,
             SourceVersion = request.SourceVersion,
             Embedding = embedding,
-            Tenant = tenantContext.Tenant!,
-            AuthorPrincipal = tenantContext.Principal.FindFirst("sub")?.Value
-                          ?? tenantContext.Principal.Identity?.Name
-                          ?? "unknown",
-            AuthorAgent = tenantContext.Agent
+            Tenant = request.Tenant ?? tenantContext.Tenant!,
+            AuthorPrincipal = authorPrincipal,
+            AuthorAgent = tenantContext.Agent,
+            // Shared entries bypass the draft queue (which is scoped to the writing tenant
+            // and never surfaces shared drafts). Create them directly as Approved to avoid
+            // a permanently unapprovable stranded draft.
+            ReviewState = isShared ? ReviewState.Approved : ReviewState.Draft,
+            ReviewedBy = isShared ? authorPrincipal : null,
+            ReviewedAt = isShared ? DateTime.UtcNow : null,
         };
+    }
 
     private static async Task<IResult> DeleteEntry(
         Guid id,
@@ -285,9 +343,74 @@ public static class ExpertiseEndpoints
         CancellationToken ct)
     {
         var tenantContext = httpContext.RequireTenantContext();
-        var deleted = await repo.SoftDeleteAsync(id, tenantContext, ct);
-        return deleted ? Results.NoContent() : Results.NotFound();
+        var outcome = await repo.SoftDeleteAsync(id, tenantContext, ct);
+        return outcome switch
+        {
+            WriteOutcome.Success => Results.NoContent(),
+            WriteOutcome.NotFound => Results.NotFound(),
+            WriteOutcome.InsufficientScope => Results.Problem(
+                "Soft-deleting a shared entry requires the expertise.write.approve scope.",
+                statusCode: 403),
+            _ => Results.Problem("Unexpected outcome from soft-delete.", statusCode: 500)
+        };
     }
+
+    private static async Task<IResult> ApproveEntry(
+        Guid id,
+        HttpContext httpContext,
+        IExpertiseRepository repo,
+        ApproveExpertiseRequest? request,
+        CancellationToken ct)
+    {
+        var tenantContext = httpContext.RequireTenantContext();
+        var visibility = request?.Visibility ?? Visibility.Private;
+
+        var (outcome, entry) = await repo.ApproveAsync(id, tenantContext, visibility, ct);
+        return outcome switch
+        {
+            WriteOutcome.Success => Results.Ok(entry),
+            WriteOutcome.NotFound => Results.NotFound(),
+            WriteOutcome.InvalidState => Results.Problem(
+                "Entry is not in Draft state and cannot be approved.",
+                statusCode: 409),
+            WriteOutcome.ConcurrentConflict => Results.Problem(
+                "Entry was modified concurrently. Retry.",
+                statusCode: 409),
+            _ => Results.Problem("Unexpected outcome from approve.", statusCode: 500)
+        };
+    }
+
+    private static async Task<IResult> RejectEntry(
+        Guid id,
+        RejectExpertiseRequest request,
+        HttpContext httpContext,
+        IExpertiseRepository repo,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.RejectionReason))
+            return Results.Problem("rejectionReason is required.", statusCode: 400);
+        if (request.RejectionReason.Length > MaxRejectionReasonLength)
+            return Results.Problem(
+                $"rejectionReason exceeds maximum length of {MaxRejectionReasonLength} characters.",
+                statusCode: 400);
+
+        var tenantContext = httpContext.RequireTenantContext();
+        var (outcome, entry) = await repo.RejectAsync(id, tenantContext, request.RejectionReason, ct);
+        return outcome switch
+        {
+            WriteOutcome.Success => Results.Ok(entry),
+            WriteOutcome.NotFound => Results.NotFound(),
+            WriteOutcome.InvalidState => Results.Problem(
+                "Entry is not in Draft state and cannot be rejected.",
+                statusCode: 409),
+            WriteOutcome.ConcurrentConflict => Results.Problem(
+                "Entry was modified concurrently. Retry.",
+                statusCode: 409),
+            _ => Results.Problem("Unexpected outcome from reject.", statusCode: 500)
+        };
+    }
+
+    private const int MaxRejectionReasonLength = 2000;
 }
 
 public enum BatchEntryStatus { Created, Duplicate, Rejected, Failed }
@@ -306,7 +429,15 @@ public record CreateExpertiseRequest(
     Severity Severity,
     string Source,
     List<string>? Tags = null,
-    string? SourceVersion = null);
+    string? SourceVersion = null,
+    /// <summary>
+    /// Optional tenant override. Only <c>"shared"</c> is accepted; all other tenants are
+    /// server-assigned from the caller's token. Requires <c>expertise.write.approve</c>.
+    /// Shared entries are created directly as <see cref="ReviewState.Approved"/> to avoid
+    /// stranded drafts (the draft queue is scoped to the writing tenant and never surfaces
+    /// shared entries).
+    /// </summary>
+    string? Tenant = null);
 
 public record UpdateExpertiseRequest(
     string? Domain = null,
@@ -317,3 +448,7 @@ public record UpdateExpertiseRequest(
     string? Source = null,
     List<string>? Tags = null,
     string? SourceVersion = null);
+
+public record ApproveExpertiseRequest(Visibility? Visibility = null);
+
+public record RejectExpertiseRequest(string RejectionReason);

@@ -21,7 +21,6 @@ public static class SearchEndpoints
         HttpContext httpContext,
         IExpertiseRepository repo,
         [FromQuery] string q,
-        [FromQuery] bool includeDrafts = false,
         [FromQuery] bool includeDeprecated = false,
         CancellationToken ct = default)
     {
@@ -29,13 +28,7 @@ public static class SearchEndpoints
             return Results.Problem("Query parameter 'q' is required.", statusCode: 400);
 
         var tenantContext = httpContext.RequireTenantContext();
-
-        if (includeDrafts && !tenantContext.Scopes.Contains(AuthConstants.WriteApproveScope))
-            return Results.Problem(
-                "?includeDrafts=true requires the expertise.write.approve scope.",
-                statusCode: 403);
-
-        var results = await repo.KeywordSearchAsync(q, tenantContext, includeDrafts, includeDeprecated, ct);
+        var results = await repo.KeywordSearchAsync(q, tenantContext, includeDeprecated, ct);
         return Results.Ok(results);
     }
 }

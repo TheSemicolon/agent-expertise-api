@@ -1,0 +1,570 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using ExpertiseApi.Auth;
+using ExpertiseApi.Data;
+using ExpertiseApi.Models;
+using ExpertiseApi.Tests.Infrastructure;
+using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace ExpertiseApi.Tests.Integration;
+
+/// <summary>
+/// Approval workflow: <c>/approve</c>, <c>/reject</c>, state-machine guards, audit row
+/// atomicity, optimistic concurrency, PATCH state regression, shared-entry soft-delete
+/// scope, and rejection-reason validation.
+/// </summary>
+[Collection("Postgres")]
+public class ApprovalWorkflowTests : IAsyncLifetime
+{
+    private readonly PostgresFixture _postgres;
+    private JwtApiFactory _factory = null!;
+
+    public ApprovalWorkflowTests(PostgresFixture postgres) => _postgres = postgres;
+
+    public async Task InitializeAsync()
+    {
+        _factory = new JwtApiFactory(_postgres.ConnectionString);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+        await db.ExpertiseAuditLogs.IgnoreQueryFilters().ExecuteDeleteAsync();
+        await db.ExpertiseEntries.IgnoreQueryFilters().ExecuteDeleteAsync();
+    }
+
+    public async Task DisposeAsync() => await _factory.DisposeAsync();
+
+    private HttpClient ClientWithScopes(params string[] scopes)
+    {
+        var token = JwtTokenMinter.Mint(
+            tenant: "test",
+            scopes: scopes,
+            groups: ["group-test"]);
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
+    private async Task<ExpertiseEntry> SeedDraft(
+        string tenant = "test",
+        string title = "needs review",
+        string body = "draft body content")
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+        var entry = TestHelpers.SeedEntry(
+            tenant: tenant, title: title, body: body, reviewState: ReviewState.Draft);
+        db.ExpertiseEntries.Add(entry);
+        await db.SaveChangesAsync();
+        return entry;
+    }
+
+    private async Task<int> CountAuditRows(Guid entryId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+        return await db.ExpertiseAuditLogs.CountAsync(a => a.EntryId == entryId);
+    }
+
+    private async Task<ExpertiseAuditLog?> LatestAudit(Guid entryId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+        return await db.ExpertiseAuditLogs
+            .Where(a => a.EntryId == entryId)
+            .OrderByDescending(a => a.Timestamp)
+            .ThenByDescending(a => a.Id)
+            .FirstOrDefaultAsync();
+    }
+
+    [Fact]
+    public async Task Approve_DraftWithApproveScope_TransitionsToApproved()
+    {
+        var draft = await SeedDraft();
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+
+        var response = await approver.PostAsJsonAsync($"/expertise/{draft.Id}/approve", new { });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetProperty("reviewState").GetString().Should().Be("Approved");
+        json.GetProperty("reviewedBy").GetString().Should().NotBeNullOrEmpty();
+        json.GetProperty("reviewedAt").GetString().Should().NotBeNullOrEmpty();
+
+        var audit = await LatestAudit(draft.Id);
+        audit.Should().NotBeNull();
+        audit!.Action.Should().Be(AuditAction.Approved);
+    }
+
+    [Fact]
+    public async Task Approve_WithoutApproveScope_Returns403()
+    {
+        var draft = await SeedDraft();
+        using var writer = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+
+        var response = await writer.PostAsJsonAsync($"/expertise/{draft.Id}/approve", new { });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Approve_AlreadyApprovedEntry_Returns409()
+    {
+        var draft = await SeedDraft();
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+
+        var first = await approver.PostAsJsonAsync($"/expertise/{draft.Id}/approve", new { });
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var second = await approver.PostAsJsonAsync($"/expertise/{draft.Id}/approve", new { });
+        second.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task Approve_CrossTenantEntry_Returns404()
+    {
+        // Caller is in tenant "test"; entry is in tenant "other-team".
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+        var draft = await SeedDraft(tenant: "other-team");
+
+        var response = await approver.PostAsJsonAsync($"/expertise/{draft.Id}/approve", new { });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Approve_WithVisibilityShared_SetsVisibility()
+    {
+        var draft = await SeedDraft();
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+
+        var response = await approver.PostAsJsonAsync($"/expertise/{draft.Id}/approve",
+            new { visibility = "Shared" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetProperty("visibility").GetString().Should().Be("Shared");
+    }
+
+    [Fact]
+    public async Task Reject_DraftWithReason_TransitionsToRejected()
+    {
+        var draft = await SeedDraft();
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+
+        var response = await approver.PostAsJsonAsync(
+            $"/expertise/{draft.Id}/reject",
+            new { rejectionReason = "Lacks supporting context." });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetProperty("reviewState").GetString().Should().Be("Rejected");
+        json.GetProperty("rejectionReason").GetString().Should().Be("Lacks supporting context.");
+
+        var audit = await LatestAudit(draft.Id);
+        audit!.Action.Should().Be(AuditAction.Rejected);
+    }
+
+    [Fact]
+    public async Task Reject_WithoutReason_Returns400()
+    {
+        var draft = await SeedDraft();
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+
+        var response = await approver.PostAsJsonAsync(
+            $"/expertise/{draft.Id}/reject",
+            new { rejectionReason = "" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Reject_OverlongReason_Returns400()
+    {
+        var draft = await SeedDraft();
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+
+        var response = await approver.PostAsJsonAsync(
+            $"/expertise/{draft.Id}/reject",
+            new { rejectionReason = new string('x', 2001) });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Approve_WritesIntegrityHashAndAuditChain()
+    {
+        var draft = await SeedDraft();
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+
+        await approver.PostAsJsonAsync($"/expertise/{draft.Id}/approve", new { });
+
+        var audit = await LatestAudit(draft.Id);
+        audit!.BeforeHash.Should().NotBeNullOrEmpty();
+        audit.AfterHash.Should().NotBeNullOrEmpty();
+        // ReviewState is excluded from the canonical hash, so before == after on approve.
+        audit.BeforeHash.Should().Be(audit.AfterHash);
+    }
+
+    [Fact]
+    public async Task ConcurrentApproveAndReject_OneSucceedsOneConflicts()
+    {
+        var draft = await SeedDraft();
+        using var c1 = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+        using var c2 = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+
+        var t1 = c1.PostAsJsonAsync($"/expertise/{draft.Id}/approve", new { });
+        var t2 = c2.PostAsJsonAsync(
+            $"/expertise/{draft.Id}/reject",
+            new { rejectionReason = "racey" });
+
+        var results = await Task.WhenAll(t1, t2);
+        var statuses = results.Select(r => (int)r.StatusCode).OrderBy(s => s).ToArray();
+
+        // One must succeed (200), one must fail with 409 (either invalid-state or
+        // concurrency token mismatch — both are 409).
+        statuses.Should().BeEquivalentTo(new[] { 200, 409 });
+    }
+
+    [Fact]
+    public async Task Patch_OnApprovedByDraftCaller_RegressesToDraft()
+    {
+        // Seed an Approved entry, then PATCH it as a write.draft caller. Per ADR-003 the
+        // entry should regress to Draft so it requires re-approval.
+        ExpertiseEntry seeded;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+            seeded = TestHelpers.SeedEntry(
+                tenant: "test", title: "approved-content", reviewState: ReviewState.Approved);
+            seeded.ReviewedBy = "previous-approver";
+            seeded.ReviewedAt = DateTime.UtcNow;
+            db.ExpertiseEntries.Add(seeded);
+            await db.SaveChangesAsync();
+        }
+
+        using var writer = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+        var response = await writer.PatchAsJsonAsync(
+            $"/expertise/{seeded.Id}",
+            new { body = "edited body — should regress to draft" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetProperty("reviewState").GetString().Should().Be("Draft");
+    }
+
+    [Fact]
+    public async Task Patch_OnApprovedByApproveCaller_PreservesApproved()
+    {
+        ExpertiseEntry seeded;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+            seeded = TestHelpers.SeedEntry(
+                tenant: "test", title: "approved-content", reviewState: ReviewState.Approved);
+            db.ExpertiseEntries.Add(seeded);
+            await db.SaveChangesAsync();
+        }
+
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope, AuthConstants.WriteApproveScope);
+        var response = await approver.PatchAsJsonAsync(
+            $"/expertise/{seeded.Id}",
+            new { body = "edited by approver — stays Approved" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetProperty("reviewState").GetString().Should().Be("Approved");
+    }
+
+    [Fact]
+    public async Task Delete_SharedEntryByWriteDraftCaller_Returns403()
+    {
+        // Soft-delete on shared entries requires write.approve per ADR-003.
+        ExpertiseEntry seeded;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+            seeded = TestHelpers.SeedEntry(
+                tenant: "shared", title: "shared-knowledge", reviewState: ReviewState.Approved);
+            db.ExpertiseEntries.Add(seeded);
+            await db.SaveChangesAsync();
+        }
+
+        using var writer = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+        var response = await writer.DeleteAsync($"/expertise/{seeded.Id}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Delete_SharedEntryByApproveCaller_Succeeds()
+    {
+        ExpertiseEntry seeded;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+            seeded = TestHelpers.SeedEntry(
+                tenant: "shared", title: "shared-knowledge", reviewState: ReviewState.Approved);
+            db.ExpertiseEntries.Add(seeded);
+            await db.SaveChangesAsync();
+        }
+
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope, AuthConstants.WriteApproveScope);
+        var response = await approver.DeleteAsync($"/expertise/{seeded.Id}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task Create_WritesAuditRow()
+    {
+        using var writer = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+
+        var response = await writer.PostAsJsonAsync("/expertise", new
+        {
+            domain = "shared",
+            title = "audit-on-create",
+            body = "body content for audit on create",
+            entryType = "Pattern",
+            severity = "Info",
+            source = "test"
+        });
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var json = await response.Content.ReadJsonElementAsync();
+        var id = json.GetProperty("id").GetGuid();
+
+        var audit = await LatestAudit(id);
+        audit.Should().NotBeNull();
+        audit!.Action.Should().Be(AuditAction.Created);
+        audit.BeforeHash.Should().BeNull();
+        audit.AfterHash.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Update_WritesAuditRowWithDifferentHashes()
+    {
+        ExpertiseEntry seeded;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+            seeded = TestHelpers.SeedEntry(
+                tenant: "test", title: "original-title", body: "original-body",
+                reviewState: ReviewState.Approved);
+            db.ExpertiseEntries.Add(seeded);
+            await db.SaveChangesAsync();
+        }
+
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope, AuthConstants.WriteApproveScope);
+        var response = await approver.PatchAsJsonAsync(
+            $"/expertise/{seeded.Id}",
+            new { title = "new-title-changes-hash" });
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var audit = await LatestAudit(seeded.Id);
+        audit!.Action.Should().Be(AuditAction.Updated);
+        audit.BeforeHash.Should().NotBeNullOrEmpty();
+        audit.AfterHash.Should().NotBeNullOrEmpty();
+        audit.BeforeHash.Should().NotBe(audit.AfterHash);
+    }
+
+    [Fact]
+    public async Task Create_SharedEntryByApproveCaller_CreatesAsApproved()
+    {
+        // write.approve callers may specify Tenant="shared" — entry is created directly
+        // as Approved (bypassing the draft queue which only surfaces the caller's own tenant).
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+
+        var response = await approver.PostAsJsonAsync("/expertise", new
+        {
+            domain = "shared",
+            title = "shared-knowledge-direct",
+            body = "authoritative cross-team content",
+            entryType = "Pattern",
+            severity = "Info",
+            source = "test",
+            tenant = "shared"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetProperty("tenant").GetString().Should().Be("shared");
+        json.GetProperty("reviewState").GetString().Should().Be("Approved");
+        json.GetProperty("reviewedBy").GetString().Should().NotBeNullOrEmpty();
+        json.GetProperty("reviewedAt").GetString().Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Create_SharedEntryByDraftCaller_Returns403()
+    {
+        // write.draft-only callers are not allowed to create Tenant="shared" entries.
+        using var writer = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+
+        var response = await writer.PostAsJsonAsync("/expertise", new
+        {
+            domain = "shared",
+            title = "should-be-rejected",
+            body = "draft caller cannot set shared tenant",
+            entryType = "Pattern",
+            severity = "Info",
+            source = "test",
+            tenant = "shared"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Create_WithNonSharedTenantOverride_Returns400()
+    {
+        // Only Tenant="shared" is a valid override — all other tenant values are rejected.
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+
+        var response = await approver.PostAsJsonAsync("/expertise", new
+        {
+            domain = "shared",
+            title = "should-be-rejected",
+            body = "cannot override to arbitrary tenant",
+            entryType = "Pattern",
+            severity = "Info",
+            source = "test",
+            tenant = "other-team"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+}
+
+[Collection("Postgres")]
+public class AuditEndpointTests : IAsyncLifetime
+{
+    private readonly PostgresFixture _postgres;
+    private JwtApiFactory _factory = null!;
+
+    public AuditEndpointTests(PostgresFixture postgres) => _postgres = postgres;
+
+    public async Task InitializeAsync()
+    {
+        _factory = new JwtApiFactory(_postgres.ConnectionString);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+        await db.ExpertiseAuditLogs.IgnoreQueryFilters().ExecuteDeleteAsync();
+        await db.ExpertiseEntries.IgnoreQueryFilters().ExecuteDeleteAsync();
+    }
+
+    public async Task DisposeAsync() => await _factory.DisposeAsync();
+
+    private HttpClient ClientWithScopes(params string[] scopes)
+    {
+        var token = JwtTokenMinter.Mint(
+            tenant: "test",
+            scopes: scopes,
+            groups: ["group-test"]);
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
+    [Fact]
+    public async Task ListAudit_WithoutAdminScope_Returns403()
+    {
+        using var approver = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteApproveScope);
+
+        var response = await approver.GetAsync("/audit");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task ListAudit_WithAdminScope_ReturnsRows()
+    {
+        // Seed an entry + audit row via direct DbContext. Pre-generate the entry Id so
+        // the audit row's FK can reference a known GUID before SaveChanges.
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+            var entry = TestHelpers.SeedEntry(tenant: "test", reviewState: ReviewState.Approved);
+            entry.Id = Guid.NewGuid();
+            db.ExpertiseEntries.Add(entry);
+            db.ExpertiseAuditLogs.Add(new ExpertiseAuditLog
+            {
+                Timestamp = DateTime.UtcNow,
+                Action = AuditAction.Created,
+                EntryId = entry.Id,
+                Tenant = "test",
+                Principal = "test-principal",
+                BeforeHash = null,
+                AfterHash = "deadbeef"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var admin = ClientWithScopes(AuthConstants.AdminScope);
+
+        var response = await admin.GetAsync("/audit");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetArrayLength().Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task ListAudit_FiltersByEntryId()
+    {
+        Guid targetId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+            var keep = TestHelpers.SeedEntry(tenant: "test", title: "keep");
+            keep.Id = Guid.NewGuid();
+            var skip = TestHelpers.SeedEntry(tenant: "test", title: "skip");
+            skip.Id = Guid.NewGuid();
+            db.ExpertiseEntries.AddRange(keep, skip);
+            await db.SaveChangesAsync();
+            targetId = keep.Id;
+
+            db.ExpertiseAuditLogs.AddRange(
+                new ExpertiseAuditLog { Timestamp = DateTime.UtcNow, Action = AuditAction.Created, EntryId = keep.Id, Tenant = "test", Principal = "p" },
+                new ExpertiseAuditLog { Timestamp = DateTime.UtcNow, Action = AuditAction.Created, EntryId = skip.Id, Tenant = "test", Principal = "p" });
+            await db.SaveChangesAsync();
+        }
+
+        using var admin = ClientWithScopes(AuthConstants.AdminScope);
+
+        var response = await admin.GetAsync($"/audit?entryId={targetId}");
+
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetArrayLength().Should().Be(1);
+        json[0].GetProperty("entryId").GetGuid().Should().Be(targetId);
+    }
+
+    [Fact]
+    public async Task ListAudit_AdminSeesAllTenants()
+    {
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+            var a = TestHelpers.SeedEntry(tenant: "test", title: "tenant-a");
+            a.Id = Guid.NewGuid();
+            var b = TestHelpers.SeedEntry(tenant: "other-team", title: "tenant-b");
+            b.Id = Guid.NewGuid();
+            db.ExpertiseEntries.AddRange(a, b);
+            await db.SaveChangesAsync();
+
+            db.ExpertiseAuditLogs.AddRange(
+                new ExpertiseAuditLog { Timestamp = DateTime.UtcNow, Action = AuditAction.Created, EntryId = a.Id, Tenant = "test", Principal = "p" },
+                new ExpertiseAuditLog { Timestamp = DateTime.UtcNow, Action = AuditAction.Created, EntryId = b.Id, Tenant = "other-team", Principal = "p" });
+            await db.SaveChangesAsync();
+        }
+
+        using var admin = ClientWithScopes(AuthConstants.AdminScope);
+
+        var response = await admin.GetAsync("/audit");
+
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetArrayLength().Should().Be(2);
+    }
+}

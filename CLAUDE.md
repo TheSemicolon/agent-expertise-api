@@ -170,9 +170,32 @@ Every read path is scoped to `Tenant IN (caller_tenant, "shared") AND ReviewStat
 3. **EF global query filter** — `HasQueryFilter` on `ExpertiseEntry` reads from `ITenantContextAccessor` as defense-in-depth. When the accessor returns null (CLI / design-time / direct DbContext access in tests) the filter short-circuits and the explicit repository `WHERE` drives correctness.
 4. **CLI bypass** — `reembed` and `rehash` call `IgnoreQueryFilters()` explicitly to operate across all tenants.
 
-`?includeDrafts=true` lifts the `ReviewState = Approved` filter on `GET /expertise`, `GET /expertise/search`, and `GET /expertise/search/semantic` — but requires `expertise.write.approve`. A `read`-only caller passing `includeDrafts=true` gets 403. Tenant scoping always applies regardless of `includeDrafts`.
-
 `?includeDeprecated=true` lifts the `DeprecatedAt IS NULL` filter; tenant scoping still applies.
+
+### Approval workflow
+
+Reads default to `ReviewState = Approved`. Reviewers see `Draft` and `Rejected` entries via `GET /expertise/drafts` (requires `expertise.write.approve`, caller's tenant only — no cross-tenant or shared draft visibility). The previous `?includeDrafts=true` query parameter on `/expertise` and `/expertise/search*` was replaced by `/expertise/drafts` in PR 4.
+
+Approval transitions:
+
+- `POST /expertise/{id}/approve` — `Draft → Approved`. Sets `ReviewedBy`, `ReviewedAt`, applies optional `Visibility` from request body (default `Private`), clears `RejectionReason`.
+- `POST /expertise/{id}/reject` — `Draft → Rejected`. Body `{ "rejectionReason": "..." }` is required, max 2000 characters.
+- Both require `expertise.write.approve`. Both return 409 if the entry is not in `Draft` state.
+- Both use a Postgres `xmin` row-version concurrency token: a concurrent approve+reject race resolves to one 200 + one 409 instead of last-write-wins.
+
+PATCH state regression (per ADR-003): when a `write.draft`-only caller PATCHes an `Approved` entry, the entry regresses to `Draft` (forces re-approval). A caller carrying `write.approve` preserves the `Approved` state. This closes the ASI06 path where post-approval content edits would otherwise bypass review.
+
+Soft-deleting a `Tenant = "shared"` entry requires `expertise.write.approve`. A `write.draft` caller attempting to delete a shared entry receives 403.
+
+### Audit log
+
+Every state-changing operation (`POST`, `PATCH`, `DELETE`, `/approve`, `/reject`) writes a row to `ExpertiseAuditLog` in the same database transaction as the entry mutation — atomic by construction. Hashes (`BeforeHash`, `AfterHash`) are SHA-256 over the canonical content fields per `IntegrityHashService`; equal hashes mean content was not modified (e.g., approve/reject change `ReviewState` only, not content).
+
+`GET /audit` is admin-only (`expertise.admin`), cross-tenant, cursor-paginated on `(Timestamp DESC, Id)`. Query parameters: `entryId`, `principal`, `action`, `from`, `to`, `limit` (1-200, default 50), `afterTimestamp` + `afterId` (cursor).
+
+### ForwardedHeaders for IpAddress capture
+
+The audit log records the client IP address. To get the real client IP behind an ingress controller, configure `ForwardedHeaders:KnownNetworks` (CIDR list) so the `UseForwardedHeaders` middleware trusts only the proxy network. Without explicit allowlist the middleware trusts only loopback and audit IpAddress will record the ingress pod IP. In Kubernetes the value is typically the cluster pod CIDR.
 
 ### OIDC issuers
 

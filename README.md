@@ -38,14 +38,18 @@ flowchart LR
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| GET | `/expertise` | List/filter entries by domain, tags, type, severity |
-| GET | `/expertise/{id}` | Get single entry |
-| POST | `/expertise` | Create entry (generates embedding) |
+| GET | `/expertise` | List/filter entries by domain, tags, type, severity (Approved only) |
+| GET | `/expertise/{id}` | Get single entry (Approved only) |
+| GET | `/expertise/drafts` | List Draft + Rejected entries in caller's tenant (requires `expertise.write.approve`) |
+| POST | `/expertise` | Create entry (generates embedding, writes audit row) |
 | POST | `/expertise/batch` | Create up to 100 entries (generates embeddings, deduplicates) |
-| PATCH | `/expertise/{id}` | Update entry (regenerates embedding if title/body changed) |
-| DELETE | `/expertise/{id}` | Soft delete (sets DeprecatedAt) |
-| GET | `/expertise/search?q=` | Keyword full-text search (tsvector) |
-| GET | `/expertise/search/semantic?q=` | Semantic vector search (pgvector) |
+| PATCH | `/expertise/{id}` | Update entry. Approved entries regress to Draft if caller lacks `write.approve` |
+| DELETE | `/expertise/{id}` | Soft delete (sets DeprecatedAt). Shared entries require `expertise.write.approve` |
+| POST | `/expertise/{id}/approve` | Transition Draft → Approved (requires `expertise.write.approve`) |
+| POST | `/expertise/{id}/reject` | Transition Draft → Rejected with required reason (requires `expertise.write.approve`) |
+| GET | `/expertise/search?q=` | Keyword full-text search (tsvector, Approved only) |
+| GET | `/expertise/search/semantic?q=` | Semantic vector search (pgvector, Approved only) |
+| GET | `/audit` | Cross-tenant audit log (cursor-paginated, requires `expertise.admin`) |
 | GET | `/health` | Liveness probe (no auth required) |
 | GET | `/metrics` | Prometheus scrape endpoint (no auth required) |
 | GET | `/query` | Interactive query page (read-only, no auth to load) |

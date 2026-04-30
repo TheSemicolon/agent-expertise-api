@@ -25,6 +25,8 @@ public class ExpertiseEndpointTests : IAsyncLifetime
 
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+        // FK ON DELETE RESTRICT requires audit logs be removed before their entries.
+        await db.ExpertiseAuditLogs.ExecuteDeleteAsync();
         await db.ExpertiseEntries.ExecuteDeleteAsync();
     }
 

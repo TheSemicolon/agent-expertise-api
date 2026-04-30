@@ -5,10 +5,12 @@ using ExpertiseApi.Cli;
 using ExpertiseApi.Data;
 using ExpertiseApi.Endpoints;
 using ExpertiseApi.Services;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.SemanticKernel;
 using Prometheus;
 using Serilog;
+using System.Net;
 using System.Text.Json.Serialization;
 using Scalar.AspNetCore;
 
@@ -53,6 +55,41 @@ builder.Services.Configure<DeduplicationOptions>(
     builder.Configuration.GetSection("Deduplication"));
 builder.Services.AddScoped<DeduplicationService>();
 
+// X-Forwarded-For support for accurate audit IpAddress capture behind ingress / reverse proxy.
+// KnownNetworks must be configured via ForwardedHeaders:KnownNetworks (CIDR list) in
+// production — without explicit allowlist the middleware trusts only loopback, which means
+// audit IpAddress will record the ingress pod IP rather than the real client.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+
+    var configuredCidrs = builder.Configuration
+        .GetSection("ForwardedHeaders:KnownNetworks")
+        .Get<string[]>()?
+        .Where(static cidr => !string.IsNullOrWhiteSpace(cidr))
+        .ToArray();
+
+    // Preserve the framework defaults when no allowlist is configured so only loopback is trusted.
+    if (configuredCidrs is null || configuredCidrs.Length == 0)
+        return;
+
+    var parsedNetworks = new List<System.Net.IPNetwork>(configuredCidrs.Length);
+    foreach (var cidr in configuredCidrs)
+    {
+        if (!System.Net.IPNetwork.TryParse(cidr, out var network))
+            throw new InvalidOperationException(
+                $"Invalid ForwardedHeaders:KnownNetworks CIDR entry '{cidr}'.");
+
+        parsedNetworks.Add(network);
+    }
+
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+
+    foreach (var network in parsedNetworks)
+        options.KnownIPNetworks.Add(network);
+});
+
 var app = builder.Build();
 
 if (ReembedCommand.IsReembedRequested(args))
@@ -66,6 +103,10 @@ if (RehashCommand.IsRehashRequested(args))
     await RehashCommand.RunAsync(app, args);
     return;
 }
+
+// ForwardedHeaders must run before authentication so HttpContext.Connection.RemoteIpAddress
+// reflects the real client IP when the audit pipeline reads it.
+app.UseForwardedHeaders();
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
@@ -94,6 +135,7 @@ app.MapHealthEndpoints();
 app.MapExpertiseEndpoints();
 app.MapSearchEndpoints();
 app.MapSemanticSearchEndpoints();
+app.MapAuditEndpoints();
 if (metricsEnabled)
     app.MapMetrics().AllowAnonymous();
 

@@ -175,6 +175,33 @@ When the principal authenticates successfully but no tenant maps (e.g. group not
 
 Cross-tenant operations return **404, not 403**, on `GET`, `PATCH`, and `DELETE` so existence is not disclosed.
 
+### Approval workflow (PR 4)
+
+Reads default to `ReviewState = Approved`. The previous `?includeDrafts=true` query parameter on `/expertise` and `/expertise/search*` was replaced by a dedicated `GET /expertise/drafts` endpoint that returns `Draft` and `Rejected` entries in the caller's tenant only (no `shared` for the draft queue). Requires `expertise.write.approve`.
+
+`POST /expertise/{id}/approve` and `POST /expertise/{id}/reject` move entries between states. Both:
+
+- Require `expertise.write.approve`.
+- Are tenant-scoped — cross-tenant returns 404, even for admins.
+- Validate the source state is `Draft`; otherwise 409.
+- Use a Postgres `xmin` system column as an EF Core RowVersion concurrency token. Concurrent approve+reject races resolve to one 200 + one 409 (no schema migration; `xmin` already exists on every Postgres table).
+- Write an `ExpertiseAuditLog` row in the same `SaveChangesAsync` as the state mutation — atomic by construction.
+- `/reject` requires a non-empty `RejectionReason` body field, max 2000 chars.
+
+PATCH state regression (ADR-003): a `write.draft`-only caller editing an `Approved` entry resets it to `Draft` so it requires re-approval. A `write.approve` caller preserves `Approved`. Without this rule the approval workflow does not actually mitigate ASI06 — content can change post-approval.
+
+Soft-deleting a `Tenant = "shared"` entry requires `expertise.write.approve` (returns 403 otherwise — 404 would mislead since the caller can read the entry).
+
+### Audit log
+
+Every write path writes one `ExpertiseAuditLog` row in the same transaction as the entry mutation. The repository owns this — `ExpertiseRepository.BuildAuditRow` constructs the row using `IHttpContextAccessor` for `IpAddress`, falling back to `null` when no `HttpContext` (CLI). `BeforeHash` / `AfterHash` are SHA-256 over the canonical content fields (`IntegrityHashService`); approve/reject leave content unchanged so before == after, but the `Action` discriminates the transition.
+
+`GET /audit` is `expertise.admin`-only and cross-tenant. Query parameters: `entryId`, `principal`, `action`, `from`, `to`, `limit` (1-200, default 50), plus cursor pagination via `afterTimestamp` + `afterId`.
+
+### ForwardedHeaders middleware
+
+`Program.cs` registers `UseForwardedHeaders()` before `UseAuthentication()`. Configure `ForwardedHeaders:KnownNetworks` (CIDR list) so the middleware trusts only the actual proxy network — without an allowlist the middleware trusts only loopback and audit `IpAddress` records the ingress pod IP. In k8s the value is typically the cluster pod CIDR. Helm values should expose this as `ingress.trustedCidr` or equivalent.
+
 ## Embedding Architecture
 
 In-process ONNX using `BertOnnxTextEmbeddingGenerationService` behind `IEmbeddingGenerator<string, Embedding<float>>`. Registered with `AddBertOnnxEmbeddingGenerator`. Requires `#pragma warning disable SKEXP0070`. Model/vocab paths configurable via `Onnx:ModelPath` and `Onnx:VocabPath` config keys (default: `models/model.onnx`, `models/vocab.txt`). The abstraction allows future substitution with Ollama or Azure OpenAI without changing application code.
