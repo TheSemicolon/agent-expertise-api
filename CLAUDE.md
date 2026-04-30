@@ -272,6 +272,26 @@ tests/ExpertiseApi.Tests/
 - **Helm chart changes** should be validated with the render test script.
 - CI runs `dotnet test` on every PR and push to `dev`.
 
+## Security Scanning
+
+Findings flow into the GitHub Security tab (Code scanning + Dependabot + Secret scanning).
+
+| Layer | Tool | Where |
+| --- | --- | --- |
+| SAST | CodeQL (C#, advanced setup) | `.github/workflows/codeql.yml` |
+| SCA (build-time gate) | `dotnet list package --vulnerable` | step in `.github/workflows/ci.yml` |
+| SCA (async alerts + PRs) | Dependabot | repo settings + `.github/dependabot.yml` |
+| Secrets | GitHub secret scanning + push protection | repo settings (Settings → Code security) |
+| Container/IaC misconfig | Trivy filesystem scan | `.github/workflows/security.yml` |
+| Dockerfile lint | Hadolint | `.github/workflows/security.yml` |
+| .NET analyzers | `<AnalysisMode>All</AnalysisMode>` | `Directory.Build.props` |
+
+Triggers for CodeQL, Trivy, and Hadolint: push to `main`/`dev`, pull requests targeting `main`/`dev`, weekly schedule (Sunday 06:00 UTC), and manual dispatch.
+
+The .NET analyzers run as **warnings**, not errors. The build is green with the existing 201 main-project warnings; the cleanup is tracked separately. The test project overrides `<AnalysisMode>Minimum</AnalysisMode>` to suppress xUnit conventions (underscore method names, `Random` for test data) that produce false-positive security findings.
+
+See `adrs/004-security-scanning-stack.md` for the design rationale and known gaps (no reachability-aware SCA, no API security spec analysis).
+
 ## Data Model — Secure Rebuild
 
 The `ExpertiseEntry` entity carries the original content fields (`Domain`, `Tags`, `Title`, `Body`, `EntryType`, `Severity`, `Source`, `SourceVersion`, `Embedding`, `CreatedAt`, `UpdatedAt`, `DeprecatedAt`, `SearchVector`) plus the secure-rebuild additions:
