@@ -247,6 +247,16 @@ Scope shorthand (`read`, `draft`, `approve`, `admin`) expands to full scope stri
 
 GHCR image: `ghcr.io/thesemicolon/agent-expertise-api` (multi-arch: amd64 + arm64).
 
+### Pre-flight PR validator
+
+`scripts/validate-pr.sh` runs the same checks `lint-pr-title.yml` enforces (plus branch name + base branch from `agent-framework/rules/github-flow.md`) so failures surface locally before a PR is opened. Run it before every `gh pr create` / `gh pr edit --title`:
+
+```bash
+scripts/validate-pr.sh --title "fix: patch concurrency mapping" --branch fix/foo --base dev
+```
+
+`--branch` defaults to the current git branch, `--base` defaults to `dev`, `--title` is required. Exit codes: `0` PASS, `1` FAIL, `2` precondition failure (missing args). The most common trip-ups are uppercase first letters in the subject (acronyms like `PATCH`, `JWT`, `OIDC` and proper nouns like `PostgreSQL`/`GitHub` must lowercase at the start).
+
 ## Testing
 
 ### Test Prerequisites
