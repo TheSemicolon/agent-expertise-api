@@ -140,7 +140,7 @@ public static class ExpertiseEndpoints
         var tenantContext = httpContext.RequireTenantContext();
         var needsReembed = request.Title is not null || request.Body is not null;
 
-        var updated = await repo.UpdateAsync(id, tenantContext, async entry =>
+        var (outcome, updated) = await repo.UpdateAsync(id, tenantContext, async entry =>
         {
             if (request.Domain is not null) entry.Domain = request.Domain;
             if (request.Tags is not null) entry.Tags = request.Tags;
@@ -158,7 +158,16 @@ public static class ExpertiseEndpoints
             }
         }, ct);
 
-        return updated is null ? Results.NotFound() : Results.Ok(updated);
+        return outcome switch
+        {
+            WriteOutcome.Success => Results.Ok(updated),
+            WriteOutcome.NotFound => Results.NotFound(),
+            WriteOutcome.ConcurrentConflict => Results.Problem(
+                title: "Concurrent modification",
+                detail: "The entry was modified by another request. Reload and retry.",
+                statusCode: StatusCodes.Status409Conflict),
+            _ => Results.Problem(statusCode: StatusCodes.Status500InternalServerError),
+        };
     }
 
     private static async Task<IResult> CreateBatch(

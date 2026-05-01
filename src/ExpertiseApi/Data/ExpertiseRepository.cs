@@ -163,14 +163,14 @@ public class ExpertiseRepository(
         return entry;
     }
 
-    public async Task<ExpertiseEntry?> UpdateAsync(Guid id, TenantContext ctx, Func<ExpertiseEntry, Task> applyUpdates, CancellationToken ct)
+    public async Task<(WriteOutcome Outcome, ExpertiseEntry? Entry)> UpdateAsync(Guid id, TenantContext ctx, Func<ExpertiseEntry, Task> applyUpdates, CancellationToken ct)
     {
         var entry = await ApplyTenantFilter(db.ExpertiseEntries.AsQueryable(), ctx)
             .Where(e => e.Id == id)
             .Where(e => e.DeprecatedAt == null)
             .FirstOrDefaultAsync(ct);
         if (entry is null)
-            return null;
+            return (WriteOutcome.NotFound, null);
 
         var beforeHash = entry.IntegrityHash ?? IntegrityHashService.Compute(entry);
 
@@ -179,20 +179,30 @@ public class ExpertiseRepository(
         entry.IntegrityHash = IntegrityHashService.Compute(entry);
 
         // ADR-003 state-regression rule: a write.draft-only caller editing an Approved
-        // entry resets it to Draft (forces re-approval); write.approve callers preserve
-        // the Approved state. Without this, the approval workflow does not actually
-        // mitigate ASI06 — content can change post-approval without re-review.
-        if (entry.ReviewState == ReviewState.Approved
+        // or Rejected entry resets it to Draft (forces re-review); write.approve callers
+        // preserve the source state. Without this, the approval workflow does not
+        // actually mitigate ASI06 — content can change post-approval without re-review,
+        // and a Rejected entry could not be resubmitted at all.
+        if ((entry.ReviewState == ReviewState.Approved || entry.ReviewState == ReviewState.Rejected)
             && !ctx.Scopes.Contains(AuthConstants.WriteApproveScope))
         {
             entry.ReviewState = ReviewState.Draft;
             entry.ReviewedBy = null;
             entry.ReviewedAt = null;
+            entry.RejectionReason = null;
         }
 
         db.ExpertiseAuditLogs.Add(BuildAuditRow(AuditAction.Updated, entry, ctx, beforeHash, entry.IntegrityHash));
-        await db.SaveChangesAsync(ct);
-        return entry;
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            return (WriteOutcome.Success, entry);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return (WriteOutcome.ConcurrentConflict, null);
+        }
     }
 
     public async Task<WriteOutcome> SoftDeleteAsync(Guid id, TenantContext ctx, CancellationToken ct)
@@ -372,6 +382,7 @@ public class ExpertiseRepository(
     {
         return await ApplyTenantFilter(db.ExpertiseEntries.AsQueryable(), ctx)
             .Where(e => e.DeprecatedAt == null)
+            .Where(e => e.ReviewState != ReviewState.Rejected)
             .Where(e => e.Domain == domain)
             .Where(e => e.Title.ToLower() == title.ToLower())
             .FirstOrDefaultAsync(ct);
@@ -382,6 +393,7 @@ public class ExpertiseRepository(
         var lowerTitles = titles.Select(t => t.ToLowerInvariant()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         return await ApplyTenantFilter(db.ExpertiseEntries.AsQueryable(), ctx)
             .Where(e => e.DeprecatedAt == null)
+            .Where(e => e.ReviewState != ReviewState.Rejected)
             .Where(e => e.Domain == domain)
             .Where(e => lowerTitles.Contains(e.Title.ToLowerInvariant()))
             .ToListAsync(ct);
@@ -391,6 +403,7 @@ public class ExpertiseRepository(
     {
         var candidate = await ApplyTenantFilter(db.ExpertiseEntries.AsQueryable(), ctx)
             .Where(e => e.DeprecatedAt == null)
+            .Where(e => e.ReviewState != ReviewState.Rejected)
             .Where(e => e.Domain == domain)
             .Where(e => e.Embedding != null)
             .OrderBy(e => e.Embedding!.CosineDistance(queryVector))
@@ -419,6 +432,7 @@ public class ExpertiseRepository(
     {
         return await ApplyTenantFilter(db.ExpertiseEntries.AsQueryable(), ctx)
             .Where(e => e.DeprecatedAt == null)
+            .Where(e => e.ReviewState != ReviewState.Rejected)
             .Where(e => e.Domain == domain)
             .Where(e => e.Embedding != null)
             .ToListAsync(ct);
