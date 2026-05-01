@@ -94,11 +94,12 @@ helm upgrade --install expertise-api ./helm/expertise-api \
   --create-namespace
 ```
 
-Docker images are published to GHCR on every push to `main`:
+Docker images are published to GHCR when a release is cut from `main`:
 
 ```text
-ghcr.io/thesemicolon/agent-expertise-api:latest
-ghcr.io/thesemicolon/agent-expertise-api:<short-sha>
+ghcr.io/thesemicolon/agent-expertise-api:latest          # most recent stable release
+ghcr.io/thesemicolon/agent-expertise-api:v1.2.3          # immutable SemVer tag
+ghcr.io/thesemicolon/agent-expertise-api:1.2             # tracks the latest 1.2.x
 ```
 
 ## Testing
