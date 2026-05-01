@@ -19,6 +19,7 @@ public static class AuthExtensions
         EnforceModeGuard(mode, environment);
 
         var issuers = LoadIssuers(configuration);
+        EnforceOidcIssuersGuard(mode, issuers);
 
         services.AddHttpContextAccessor();
         services.AddSingleton<IAuthorizationHandler, ScopeAuthorizationHandler>();
@@ -86,6 +87,27 @@ public static class AuthExtensions
             $"Auth:Mode '{mode}' is only permitted when ASPNETCORE_ENVIRONMENT='Development'. " +
             $"Current environment: '{environment.EnvironmentName}'. " +
             "Set Auth:Mode to 'Oidc' for non-Development deployments.");
+    }
+
+    /// <summary>
+    /// Fails startup loudly when <c>Auth:Mode=Oidc</c> is configured but no valid
+    /// <c>Auth:Oidc:Issuers</c> entries are loaded. Without this guard the API boots
+    /// successfully and 500s on the first authenticated request — a deployment-day
+    /// footgun where <c>/health</c> and <c>/metrics</c> look green while every
+    /// protected endpoint is broken. Fires in any environment because explicit
+    /// <c>Auth:Mode=Oidc</c> with zero issuers is misconfiguration regardless of where.
+    /// </summary>
+    internal static void EnforceOidcIssuersGuard(AuthMode mode, IReadOnlyList<OidcIssuerOptions> issuers)
+    {
+        if (mode != AuthMode.Oidc) return;
+        if (issuers.Count > 0) return;
+
+        throw new InvalidOperationException(
+            "Auth:Mode='Oidc' requires at least one valid Auth:Oidc:Issuers entry. " +
+            "Found zero — either the configured list is empty, or every entry's Issuer is " +
+            "blank or starts with '<TODO' (placeholder values are filtered at load time). " +
+            "Either populate Auth:Oidc:Issuers with real issuer URLs, or change Auth:Mode " +
+            "(LocalDev/ApiKey/Hybrid permitted only in Development).");
     }
 
     internal static IReadOnlyList<OidcIssuerOptions> LoadIssuers(IConfiguration configuration)
@@ -183,7 +205,8 @@ public static class AuthExtensions
         AuthMode.Oidc => issuers.Count > 0
             ? issuers[0].Name
             : throw new InvalidOperationException(
-                "Auth:Mode=Oidc requires at least one configured Auth:Oidc:Issuers entry."),
+                "Auth:Mode=Oidc with zero issuers reached request-time fallback — " +
+                "this should be unreachable because EnforceOidcIssuersGuard fails at startup."),
         AuthMode.Hybrid => issuers.Count > 0 ? issuers[0].Name : ApiKeyAuthHandler.SchemeName,
         _ => throw new InvalidOperationException($"Unknown Auth:Mode '{mode}'.")
     };

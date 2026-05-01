@@ -146,7 +146,7 @@ All endpoints except `/health`, `/query`, and `/metrics` require `Authorization:
 | `ApiKey` | Static `Auth:ApiKey` value (legacy) | Development only |
 | `Hybrid` | All of the above | Development only — default |
 
-The startup guard hard-fails if a non-`Oidc` mode is configured outside Development.
+The startup guard hard-fails if (a) a non-`Oidc` mode is configured outside Development, or (b) `Auth:Mode=Oidc` is configured with zero valid `Auth:Oidc:Issuers` entries (any environment). Without (b) a misconfigured deployment boots cleanly, passes `/health` and `/metrics`, and returns 500 on the first protected request.
 
 ### Scopes
 
