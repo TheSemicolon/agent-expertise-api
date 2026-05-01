@@ -17,9 +17,56 @@ ingress:
   hostname: expertise.example.com
   clusterIssuer: letsencrypt-prod
 
+# Authentication.
+#
+# `mode: Oidc` is the only mode permitted by the API's startup guard outside
+# Development. `LocalDev`, `ApiKey`, and `Hybrid` will hard-fail at startup
+# unless ASPNETCORE_ENVIRONMENT=Development. Operators MUST populate
+# `auth.oidc.issuers` with at least one entry — otherwise every request 401s.
 auth:
-  mode: apikey
+  mode: Oidc
   secretName: expertise-api-app
+  oidc:
+    # One entry per IdP (Entra, Authentik, etc). The chart renders these as
+    # `Auth__Oidc__Issuers__N__*` env vars on the API container; the API binds
+    # them via the ASP.NET Core configuration system.
+    #
+    # Required per entry: name, issuer, audience.
+    # Optional: additionalAudiences, scopeClaims, tenantSource, roleSeparator,
+    #           groupClaim, groupToTenantMapping.
+    #
+    # Issuer URL must be byte-exact to the issuer's `iss` claim — copy from
+    # `.well-known/openid-configuration`. Authentik includes a trailing slash;
+    # Entra v2 does not.
+    issuers: []
+    # Example (commented):
+    # - name: Entra
+    #   issuer: "https://login.microsoftonline.com/{tenant-id}/v2.0"
+    #   audience: "{api-client-id-guid}"
+    #   additionalAudiences: []
+    #   scopeClaims: ["scp", "roles"]
+    #   tenantSource: CompoundRole
+    #   roleSeparator: ":"
+    #   groupClaim: "groups"
+    #   groupToTenantMapping: {}
+    # - name: Authentik
+    #   issuer: "https://auth.example.com/application/o/expertise-api/"
+    #   audience: "expertise-api"
+    #   scopeClaims: ["scope"]
+    #   tenantSource: Groups
+    #   groupClaim: "groups"
+    #   groupToTenantMapping:
+    #     "<group-uuid>": team-alpha
+
+# Networks (CIDR list) the ASP.NET Core ForwardedHeaders middleware will trust
+# for X-Forwarded-For. Without an explicit allowlist the middleware trusts only
+# loopback and audit-log IpAddress records the ingress pod IP rather than the
+# real client. Typical value: the cluster pod CIDR (matches `postgres.podCidr`
+# below) plus any other proxy networks.
+forwardedHeaders:
+  trustedCidr: []
+  # Example:
+  # - "10.42.0.0/16"
 
 api:
   resources:
@@ -60,14 +107,3 @@ metrics:
     interval: 30s
     scrapeTimeout: 10s
     labels: {}
-
-backup:
-  enabled: true
-  schedule: "0 2 * * *"
-  image: schickling/postgres-backup-s3:latest
-  secretName: expertise-s3-backup
-  retention: "7"
-  s3:
-    bucket: expertise-backup
-    endpoint: ""
-    forcePathStyle: false

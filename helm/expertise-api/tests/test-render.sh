@@ -11,6 +11,7 @@ ERRORS=0
 WARNINGS=0
 
 ok()    { echo "OK    [$1] $2"; }
+# shellcheck disable=SC2317  # part of canonical helper set
 skip()  { echo "SKIP  [$1] $2"; }
 warn()  { echo "WARN  [$1] $2"; WARNINGS=$((WARNINGS + 1)); }
 err()   { echo "ERROR [$1] $2" >&2; ERRORS=$((ERRORS + 1)); }
@@ -57,6 +58,76 @@ if echo "$output" | grep -q "path: /metrics"; then
     ok "sm-path" "ServiceMonitor scrapes /metrics path"
 else
     err "sm-path" "ServiceMonitor /metrics path not found"
+fi
+
+# 6. auth.mode default in API container env is "Oidc"
+output=$(helm template test-release "$CHART" 2>&1)
+if echo "$output" | awk '/name: AUTH__MODE/{found=1; next} found && /value:/{print; exit}' | grep -q '"Oidc"'; then
+    ok "auth-mode-default" "AUTH__MODE defaults to Oidc (startup guard requires it outside Development)"
+else
+    err "auth-mode-default" "AUTH__MODE default is not Oidc"
+fi
+
+# 7. OIDC issuer env vars render when auth.oidc.issuers is populated
+output=$(helm template test-release "$CHART" \
+    --set 'auth.oidc.issuers[0].name=Entra' \
+    --set 'auth.oidc.issuers[0].issuer=https://login.microsoftonline.com/x/v2.0' \
+    --set 'auth.oidc.issuers[0].audience=api' 2>&1)
+if echo "$output" | grep -q "Auth__Oidc__Issuers__0__Name" \
+   && echo "$output" | grep -q "Auth__Oidc__Issuers__0__Issuer" \
+   && echo "$output" | grep -q "Auth__Oidc__Issuers__0__Audience"; then
+    ok "oidc-issuer-env" "Auth__Oidc__Issuers__0__{Name,Issuer,Audience} env vars rendered"
+else
+    err "oidc-issuer-env" "OIDC issuer env vars not rendered when auth.oidc.issuers is populated"
+fi
+
+# 8. ForwardedHeaders env vars render when forwardedHeaders.trustedCidr is populated
+output=$(helm template test-release "$CHART" \
+    --set 'forwardedHeaders.trustedCidr[0]=10.42.0.0/16' 2>&1)
+if echo "$output" | grep -q "ForwardedHeaders__KnownNetworks__0"; then
+    ok "forwarded-headers" "ForwardedHeaders__KnownNetworks__0 env var rendered"
+else
+    err "forwarded-headers" "ForwardedHeaders env var not rendered when forwardedHeaders.trustedCidr is populated"
+fi
+
+# 9. API container drops ALL capabilities
+output=$(helm template test-release "$CHART" 2>&1)
+api_section=$(echo "$output" | awk '/^kind: Deployment$/,/^---$/')
+if echo "$api_section" | grep -q 'drop: \["ALL"\]'; then
+    ok "api-caps-drop" "API container drops ALL capabilities"
+else
+    err "api-caps-drop" "API container missing capabilities.drop: [ALL]"
+fi
+
+# 10. API pod sets seccompProfile RuntimeDefault
+if echo "$api_section" | awk '/seccompProfile:/{found=1; next} found && /type:/{print; exit}' | grep -q "RuntimeDefault"; then
+    ok "api-seccomp" "API pod seccompProfile set to RuntimeDefault"
+else
+    err "api-seccomp" "API pod missing seccompProfile RuntimeDefault"
+fi
+
+# 11. Postgres pod has runAsNonRoot: true
+postgres_section=$(echo "$output" | awk '/^kind: StatefulSet$/,/^---$/')
+if echo "$postgres_section" | grep -q "runAsNonRoot: true"; then
+    ok "postgres-non-root" "Postgres pod runAsNonRoot: true"
+else
+    err "postgres-non-root" "Postgres pod missing runAsNonRoot: true"
+fi
+
+# 12. pgbouncer container has securityContext (drop ALL)
+# Both postgres and pgbouncer containers drop ALL — verify at least 2 occurrences in the StatefulSet
+caps_count=$(echo "$postgres_section" | grep -c 'drop: \["ALL"\]' || true)
+if [ "$caps_count" -ge 2 ]; then
+    ok "postgres-pgbouncer-caps" "Both postgres and pgbouncer containers drop ALL capabilities"
+else
+    err "postgres-pgbouncer-caps" "Expected 2+ 'drop: [ALL]' in StatefulSet, found $caps_count"
+fi
+
+# 13. Backup CronJob is gone (moved to sidecar)
+if ! echo "$output" | grep -q "kind: CronJob"; then
+    ok "no-backup-cronjob" "Backup CronJob removed (handled by sidecar in infra repo)"
+else
+    err "no-backup-cronjob" "Backup CronJob still present in chart — should be dropped"
 fi
 
 echo "=================================="
