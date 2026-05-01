@@ -117,7 +117,7 @@ curl "http://localhost:5000/expertise/search/semantic?q=test&limit=5" \
   -H "Authorization: Bearer dev-api-key-change-me"
 
 # 9. OpenAPI docs
-# Browse to http://localhost:5000/scalar/v1
+# Browse to http://localhost:5000/scalar/v1 (Development only — gated on IsDevelopment())
 
 # 10. Query page (interactive browser UI for read-only browsing and search)
 # Browse to http://localhost:5000/query
@@ -156,8 +156,8 @@ Four scopes drive the four authorization policies. The hierarchy is `admin ⊇ a
 | --- | --- | --- |
 | `expertise.read` | `ReadAccess` | All `GET` endpoints |
 | `expertise.write.draft` | `WriteAccess` | `POST`, `PATCH`, `DELETE` (drafts in caller's own tenant) |
-| `expertise.write.approve` | `WriteApproveAccess` | `/approve`, `/reject` (PR 4) |
-| `expertise.admin` | `AdminAccess` | `/audit`, cross-tenant ops (PR 4) |
+| `expertise.write.approve` | `WriteApproveAccess` | `/approve`, `/reject` |
+| `expertise.admin` | `AdminAccess` | `/audit`, cross-tenant ops |
 
 The legacy `expertise.write` scope is normalized to `expertise.write.draft` during one transition cycle.
 
@@ -174,7 +174,7 @@ Every read path is scoped to `Tenant IN (caller_tenant, "shared") AND ReviewStat
 
 ### Approval workflow
 
-Reads default to `ReviewState = Approved`. Reviewers see `Draft` and `Rejected` entries via `GET /expertise/drafts` (requires `expertise.write.approve`, caller's tenant only — no cross-tenant or shared draft visibility). The previous `?includeDrafts=true` query parameter on `/expertise` and `/expertise/search*` was replaced by `/expertise/drafts` in PR 4.
+Reads default to `ReviewState = Approved`. Reviewers see `Draft` and `Rejected` entries via `GET /expertise/drafts` (requires `expertise.write.approve`, caller's tenant only — no cross-tenant or shared draft visibility). The previous `?includeDrafts=true` query parameter on `/expertise` and `/expertise/search*` was replaced by `/expertise/drafts`.
 
 Approval transitions:
 

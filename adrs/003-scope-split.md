@@ -26,9 +26,9 @@ Scope semantics:
 
 | Scope | Permits |
 |-------|---------|
-| `expertise.read` | All `GET` endpoints. Reads are always filtered to `Tenant IN (caller, 'shared') AND ReviewState = 'Approved'` unless `?includeDrafts=true` is passed and the caller also has `write.approve`. |
+| `expertise.read` | All `GET` endpoints. Reads are always filtered to `Tenant IN (caller, 'shared') AND ReviewState = 'Approved'`; reviewers see drafts via `GET /expertise/drafts` (requires `write.approve`). |
 | `expertise.write.draft` | `POST`, `PATCH` on caller's own tenant only. `ReviewState` is forced to `Draft`. `Tenant` is forced to the caller's tenant. `Visibility` is forced to `Private`. The caller cannot override these by sending them in the request body. |
-| `expertise.write.approve` | Everything `write.draft` permits, plus: setting `ReviewState = 'Approved'` directly on `POST`, calling `POST /expertise/{id}/approve` and `/reject`, setting `Tenant = 'shared'`, setting `Visibility = 'Shared'`, and editing Approved entries (which transitions them back to `Draft` for non-approvers, but stays `Approved` for approvers). |
+| `expertise.write.approve` | Everything `write.draft` permits, plus: calling `POST /expertise/{id}/approve` and `/reject`, setting `Tenant = 'shared'`, setting `Visibility = 'Shared'`, and editing Approved entries (which transitions them back to `Draft` for non-approvers, but stays `Approved` for approvers). |
 | `expertise.admin` | Everything `write.approve` permits, plus: `GET /audit`, soft-delete on shared entries, and tenant reassignment. |
 
 Scope expansion is **policy-side, not token-side**: a token carrying `expertise.admin` is treated as if it also carries `approve`, `draft`, and `read`. This keeps IdP configuration simple — operators issue exactly one scope per role — and centralizes the expansion logic in the authorization handler.
@@ -53,8 +53,8 @@ A `GET /expertise/{id}` for an entry in another tenant returns 404 rather than 4
 - Good, because the audit log gives the team a tamper-evident record of who promoted what and when, queryable via `/audit` for `expertise.admin` holders.
 - Good, because shared entries (`Tenant = 'shared'`) require an explicit `write.approve` action — drift into the shared keyspace is no longer accidental.
 - Bad, because curator workflow now requires a human-in-the-loop step for every entry that should reach canonical state. This is intentional; the framework's curator agent operates with `write.approve` scope to triage drafts on behalf of the operator. Operators must never grant `write.approve` to long-lived non-interactive service principals.
-- Bad, because the legacy `expertise.write` scope is now ambiguous and must be deprecated cleanly. The cutover plan handles this in PR 6 (production breaking change, Conventional Commits `!`).
-- Bad, because `?includeDrafts=true` adds a UI/agent path that must be tested for tenant-scoping. Approvers see drafts in their own tenant only, never drafts in other tenants — even with `expertise.admin`.
+- Bad, because the legacy `expertise.write` scope is now ambiguous and must be deprecated cleanly. Removal is tracked as a future breaking change (Conventional Commits `!`).
+- Bad, because the dedicated `GET /expertise/drafts` endpoint adds a UI/agent path that must be tested for tenant-scoping. Approvers see drafts in their own tenant only, never drafts in other tenants — even with `expertise.admin`.
 
 ## Related
 

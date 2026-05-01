@@ -103,13 +103,18 @@ Single-row `EmbeddingMetadata` table tracks model name, dimensions, and `LastRee
 |--------|----------|-------|---------|-----------------|
 | GET | `/expertise` | `expertise.read` | Filter by domain, tags, type, severity | `domain`, `tags` (comma-separated), `entryType`, `severity`, `includeDeprecated` |
 | GET | `/expertise/{id}` | `expertise.read` | Single entry | |
-| POST | `/expertise` | `expertise.write` | Create entry (generates embedding) | |
-| POST | `/expertise/batch` | `expertise.write` | Create up to 100 entries (generates embeddings, deduplicates) | Max 100 entries per batch |
-| PATCH | `/expertise/{id}` | `expertise.write` | Update entry (regenerates embedding if title/body changed) | |
-| DELETE | `/expertise/{id}` | `expertise.write` | Soft delete (sets DeprecatedAt) | |
+| POST | `/expertise` | `expertise.write.draft` | Create entry (generates embedding) | |
+| POST | `/expertise/batch` | `expertise.write.draft` | Create up to 100 entries (generates embeddings, deduplicates) | Max 100 entries per batch |
+| PATCH | `/expertise/{id}` | `expertise.write.draft` | Update entry (regenerates embedding if title/body changed) | |
+| DELETE | `/expertise/{id}` | `expertise.write.draft` | Soft delete (sets DeprecatedAt). Shared entries require `expertise.write.approve`. | |
+| GET | `/expertise/drafts` | `expertise.write.approve` | List Draft + Rejected entries in caller's tenant | |
+| POST | `/expertise/{id}/approve` | `expertise.write.approve` | Transition Draft → Approved | |
+| POST | `/expertise/{id}/reject` | `expertise.write.approve` | Transition Draft → Rejected (requires reason) | |
 | GET | `/expertise/search?q=` | `expertise.read` | Keyword full-text search (tsvector) | `includeDeprecated` |
 | GET | `/expertise/search/semantic?q=` | `expertise.read` | Semantic vector search (pgvector) | `limit` (1-100, default 10), `includeDeprecated` |
+| GET | `/audit` | `expertise.admin` | Cross-tenant audit log | `entryId`, `principal`, `action`, `from`, `to`, `limit` (1-200, default 50), cursor (`afterTimestamp` + `afterId`) |
 | GET | `/health` | none | Liveness probe | |
+| GET | `/metrics` | none | Prometheus scrape endpoint | |
 | GET | `/query` | none | Interactive browser UI for read-only API exploration | |
 
 CLI:
@@ -161,7 +166,7 @@ Four scopes with hierarchical implication (`admin ⊇ approve ⊇ draft ⊇ read
 
 ### TenantContext
 
-A `TenantContext { Tenant, Principal, Agent?, Scopes[] }` is built per request and stashed on `HttpContext.Features`. All authentication paths (JWT, ApiKey, LocalDev) populate it. Endpoints read it via `HttpContext.RequireTenantContext()`. Per ADR-001 every `IExpertiseRepository` method takes a `TenantContext` argument and constructs explicit `WHERE Tenant IN (ctx.Tenant, "shared") AND ReviewState = Approved` predicates. The default review state filter is lifted by `?includeDrafts=true` only when the caller carries `expertise.write.approve` (otherwise the endpoint returns 403); the tenant filter is unconditional.
+A `TenantContext { Tenant, Principal, Agent?, Scopes[] }` is built per request and stashed on `HttpContext.Features`. All authentication paths (JWT, ApiKey, LocalDev) populate it. Endpoints read it via `HttpContext.RequireTenantContext()`. Per ADR-001 every `IExpertiseRepository` method takes a `TenantContext` argument and constructs explicit `WHERE Tenant IN (ctx.Tenant, "shared") AND ReviewState = Approved` predicates. The default review state filter is lifted via `GET /expertise/drafts` for callers carrying `expertise.write.approve` (caller's tenant only); the tenant filter is unconditional.
 
 When the principal authenticates successfully but no tenant maps (e.g. group not in `GroupToTenantMapping`), `TenantContext.Tenant` is `null` and the authorization handler returns 403.
 
@@ -175,7 +180,7 @@ When the principal authenticates successfully but no tenant maps (e.g. group not
 
 Cross-tenant operations return **404, not 403**, on `GET`, `PATCH`, and `DELETE` so existence is not disclosed.
 
-### Approval workflow (PR 4)
+### Approval workflow
 
 Reads default to `ReviewState = Approved`. The previous `?includeDrafts=true` query parameter on `/expertise` and `/expertise/search*` was replaced by a dedicated `GET /expertise/drafts` endpoint that returns `Draft` and `Rejected` entries in the caller's tenant only (no `shared` for the draft queue). Requires `expertise.write.approve`.
 
@@ -259,13 +264,14 @@ All 6 personal phase steps are complete:
 | 5 | Done | Helm chart + SOPS secrets + bootstrap manifests + DDNS script |
 | 6 | Done | Backup CronJob (Helm) + manual backup/restore wrapper |
 
-## Production Hardening Phase (not started)
+## Production Hardening — outstanding
 
-- Entra ID OIDC integration for business deployment
-- Business k3s bootstrap and deploy
-- Monitoring / observability (OpenTelemetry, Prometheus metrics)
-- Rate limiting
-- CI/CD pipeline
+Shipped: multi-issuer OIDC (ADR-002 → ADR-005), four-scope split + audit log (ADR-003), Serilog + Prometheus metrics, CodeQL/Trivy/Hadolint security pipeline (ADR-004), semantic-release.
+
+Outstanding:
+
+- Rate limiting (per-principal + per-tenant)
+- Production deployments (Entra-backed business cluster; Authentik-backed homelab)
 
 ## Full Design Document
 

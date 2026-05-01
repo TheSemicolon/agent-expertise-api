@@ -1,6 +1,6 @@
 # Multi-issuer OIDC via JwtBearerOptions.ValidIssuers allowlist
 
-- Status: accepted
+- Status: superseded by ADR-005
 - Date: 2026-04-28
 
 ## Context and Problem Statement
