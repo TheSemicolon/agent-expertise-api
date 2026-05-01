@@ -124,7 +124,7 @@ CLI:
 
 ## Authentication
 
-`Auth:Mode` config switch drives scheme registration. `Oidc` is the only mode permitted outside Development; `LocalDev`, `ApiKey`, and `Hybrid` hard-fail on startup in any non-Development environment. `Hybrid` is the default in Development.
+`Auth:Mode` config switch drives scheme registration. `Oidc` is the only mode permitted outside Development; `LocalDev`, `ApiKey`, and `Hybrid` hard-fail on startup in any non-Development environment. `Hybrid` is the default in Development. `Auth:Mode=Oidc` with zero valid `Auth:Oidc:Issuers` entries also hard-fails on startup (any environment) — without this guard the API boots cleanly but 500s every protected request.
 
 ### Modes
 

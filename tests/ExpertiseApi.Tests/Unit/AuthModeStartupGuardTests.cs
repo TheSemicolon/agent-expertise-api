@@ -94,6 +94,59 @@ public class AuthModeStartupGuardTests
            .WithMessage("*not a recognized mode*");
     }
 
+    [Theory]
+    [InlineData("Production")]
+    [InlineData("Staging")]
+    [InlineData("Development")]
+    public void EnforceOidcIssuersGuard_OidcWithZeroIssuers_ThrowsInAnyEnvironment(string env)
+    {
+        // Argument env is documentation-only — the guard does not consult IHostEnvironment.
+        // We assert the failure mode is environment-agnostic so the misconfiguration
+        // surfaces loudly even in Development where a developer might assume the
+        // missing issuers will be ignored.
+        _ = env;
+
+        var act = () => AuthExtensions.EnforceOidcIssuersGuard(
+            AuthMode.Oidc,
+            Array.Empty<OidcIssuerOptions>());
+
+        act.Should().Throw<InvalidOperationException>()
+           .WithMessage("*requires at least one valid Auth:Oidc:Issuers entry*");
+    }
+
+    [Fact]
+    public void EnforceOidcIssuersGuard_OidcWithIssuers_DoesNotThrow()
+    {
+        var issuers = new[]
+        {
+            new OidcIssuerOptions
+            {
+                Name = "Test",
+                Issuer = "https://example.com",
+                Audience = "test-aud"
+            }
+        };
+
+        var act = () => AuthExtensions.EnforceOidcIssuersGuard(AuthMode.Oidc, issuers);
+
+        act.Should().NotThrow();
+    }
+
+    [Theory]
+    [InlineData(AuthMode.LocalDev)]
+    [InlineData(AuthMode.ApiKey)]
+    [InlineData(AuthMode.Hybrid)]
+    public void EnforceOidcIssuersGuard_NonOidcMode_DoesNotThrow_EvenWithZeroIssuers(AuthMode mode)
+    {
+        // Hybrid in particular: zero issuers is a legitimate Development configuration
+        // where ApiKeyAuthHandler is the fallback scheme.
+        var act = () => AuthExtensions.EnforceOidcIssuersGuard(
+            mode,
+            Array.Empty<OidcIssuerOptions>());
+
+        act.Should().NotThrow();
+    }
+
     private class HostingEnvironment : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = Environments.Development;
