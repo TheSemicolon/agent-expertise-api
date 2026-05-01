@@ -31,7 +31,7 @@ user-invocable: false
 | Secrets | SOPS + age (no in-cluster controller) |
 | Container registry | GitHub Container Registry (`ghcr.io`, private) |
 | Manifests | Helm chart — shared templates, per-environment values |
-| Backup | Daily `pg_dump` CronJob → AWS S3 + manual `scripts/backup.sh` wrapper |
+| Backup | Out-of-chart sidecar (custom image, deployed from the infrastructure repo) |
 | CLI | `reembed` — regenerate all embeddings for model migration |
 
 ## Data Model
@@ -264,7 +264,7 @@ All 6 personal phase steps are complete:
 | 3 | Done | Docker Compose local dev (postgres + pgbouncer + API) |
 | 4 | Done | Embedding service (ONNX) + semantic search + `reembed` CLI |
 | 5 | Done | Helm chart + SOPS secrets + bootstrap manifests + DDNS script |
-| 6 | Done | Backup CronJob (Helm) + manual backup/restore wrapper |
+| 6 | Done | Backup mechanism (moved to out-of-chart sidecar in the infrastructure repo) |
 
 ## Production Hardening — outstanding
 

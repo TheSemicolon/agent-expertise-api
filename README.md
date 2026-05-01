@@ -84,7 +84,7 @@ See [CLAUDE.md](CLAUDE.md) for full build commands, curl examples, and developme
 
 ## Deployment
 
-A Helm chart is included at `helm/expertise-api/` for deploying to Kubernetes (k3s or any k8s cluster). The chart includes PostgreSQL, PgBouncer, and an optional S3 backup CronJob.
+A Helm chart is included at `helm/expertise-api/` for deploying to Kubernetes (k3s or any k8s cluster). The chart includes PostgreSQL and PgBouncer. Backup is handled out-of-chart by a sidecar deployed from the infrastructure repo.
 
 ```bash
 # Example deploy

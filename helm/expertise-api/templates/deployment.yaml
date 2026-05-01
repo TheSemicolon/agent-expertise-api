@@ -20,6 +20,8 @@ spec:
         runAsUser: 1654
         runAsGroup: 1654
         fsGroup: 1654
+        seccompProfile:
+          type: RuntimeDefault
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -31,6 +33,8 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
@@ -48,6 +52,44 @@ spec:
               value: /tmp
             - name: DOTNET_EnableDiagnostics
               value: "0"
+            {{- /* OIDC issuers — one block per entry in auth.oidc.issuers. */}}
+            {{- range $i, $issuer := .Values.auth.oidc.issuers }}
+            - name: Auth__Oidc__Issuers__{{ $i }}__Name
+              value: {{ required (printf "auth.oidc.issuers[%d].name is required" $i) $issuer.name | quote }}
+            - name: Auth__Oidc__Issuers__{{ $i }}__Issuer
+              value: {{ required (printf "auth.oidc.issuers[%d].issuer is required" $i) $issuer.issuer | quote }}
+            - name: Auth__Oidc__Issuers__{{ $i }}__Audience
+              value: {{ required (printf "auth.oidc.issuers[%d].audience is required" $i) $issuer.audience | quote }}
+            {{- range $j, $aud := $issuer.additionalAudiences }}
+            - name: Auth__Oidc__Issuers__{{ $i }}__AdditionalAudiences__{{ $j }}
+              value: {{ $aud | quote }}
+            {{- end }}
+            {{- range $j, $claim := $issuer.scopeClaims }}
+            - name: Auth__Oidc__Issuers__{{ $i }}__ScopeClaims__{{ $j }}
+              value: {{ $claim | quote }}
+            {{- end }}
+            {{- with $issuer.tenantSource }}
+            - name: Auth__Oidc__Issuers__{{ $i }}__TenantSource
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $issuer.roleSeparator }}
+            - name: Auth__Oidc__Issuers__{{ $i }}__RoleSeparator
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $issuer.groupClaim }}
+            - name: Auth__Oidc__Issuers__{{ $i }}__GroupClaim
+              value: {{ . | quote }}
+            {{- end }}
+            {{- range $group, $tenant := $issuer.groupToTenantMapping }}
+            - name: Auth__Oidc__Issuers__{{ $i }}__GroupToTenantMapping__{{ $group }}
+              value: {{ $tenant | quote }}
+            {{- end }}
+            {{- end }}
+            {{- /* ForwardedHeaders trusted CIDRs — without these, audit-log IpAddress records the ingress pod IP. */}}
+            {{- range $i, $cidr := .Values.forwardedHeaders.trustedCidr }}
+            - name: ForwardedHeaders__KnownNetworks__{{ $i }}
+              value: {{ $cidr | quote }}
+            {{- end }}
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
           volumeMounts:
