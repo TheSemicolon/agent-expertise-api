@@ -181,9 +181,11 @@ Approval transitions:
 - `POST /expertise/{id}/approve` — `Draft → Approved`. Sets `ReviewedBy`, `ReviewedAt`, applies optional `Visibility` from request body (default `Private`), clears `RejectionReason`.
 - `POST /expertise/{id}/reject` — `Draft → Rejected`. Body `{ "rejectionReason": "..." }` is required, max 2000 characters.
 - Both require `expertise.write.approve`. Both return 409 if the entry is not in `Draft` state.
-- Both use a Postgres `xmin` row-version concurrency token: a concurrent approve+reject race resolves to one 200 + one 409 instead of last-write-wins.
+- Both use a Postgres `xmin` row-version concurrency token: a concurrent approve+reject race resolves to one 200 + one 409 instead of last-write-wins. The same applies to concurrent PATCHes — `UpdateAsync` catches `DbUpdateConcurrencyException` and returns 409.
 
-PATCH state regression (per ADR-003): when a `write.draft`-only caller PATCHes an `Approved` entry, the entry regresses to `Draft` (forces re-approval). A caller carrying `write.approve` preserves the `Approved` state. This closes the ASI06 path where post-approval content edits would otherwise bypass review.
+PATCH state regression (per ADR-003): when a `write.draft`-only caller PATCHes an `Approved` or `Rejected` entry, the entry regresses to `Draft` and review metadata (`ReviewedBy`, `ReviewedAt`, `RejectionReason`) is cleared. A caller carrying `write.approve` preserves the source state. The Approved branch closes the ASI06 path where post-approval content edits would otherwise bypass review; the Rejected branch lets an author resubmit content after addressing the rejection reason.
+
+Dedup queries (exact-match and semantic) exclude `Rejected` entries so a Rejected entry does not permanently block resubmission of identical content. Drafts and Approved entries still dedup as before.
 
 Soft-deleting a `Tenant = "shared"` entry requires `expertise.write.approve`. A `write.draft` caller attempting to delete a shared entry receives 403.
 

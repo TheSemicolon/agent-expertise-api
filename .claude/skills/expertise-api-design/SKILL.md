@@ -189,11 +189,13 @@ Reads default to `ReviewState = Approved`. The previous `?includeDrafts=true` qu
 - Require `expertise.write.approve`.
 - Are tenant-scoped — cross-tenant returns 404, even for admins.
 - Validate the source state is `Draft`; otherwise 409.
-- Use a Postgres `xmin` system column as an EF Core RowVersion concurrency token. Concurrent approve+reject races resolve to one 200 + one 409 (no schema migration; `xmin` already exists on every Postgres table).
+- Use a Postgres `xmin` system column as an EF Core RowVersion concurrency token. Concurrent approve+reject and concurrent PATCH races resolve to one 200 + one 409 (no schema migration; `xmin` already exists on every Postgres table). `UpdateAsync` catches `DbUpdateConcurrencyException` and maps it to 409 alongside `ApproveAsync`/`RejectAsync`.
 - Write an `ExpertiseAuditLog` row in the same `SaveChangesAsync` as the state mutation — atomic by construction.
 - `/reject` requires a non-empty `RejectionReason` body field, max 2000 chars.
 
-PATCH state regression (ADR-003): a `write.draft`-only caller editing an `Approved` entry resets it to `Draft` so it requires re-approval. A `write.approve` caller preserves `Approved`. Without this rule the approval workflow does not actually mitigate ASI06 — content can change post-approval.
+PATCH state regression (ADR-003): a `write.draft`-only caller editing an `Approved` or `Rejected` entry resets it to `Draft` and clears review metadata (`ReviewedBy`, `ReviewedAt`, `RejectionReason`) so it requires re-review. A `write.approve` caller preserves the source state. The Approved branch ensures content changes post-approval cannot bypass review (ASI06 mitigation); the Rejected branch enables resubmission after the author addresses the rejection reason.
+
+Dedup queries (exact-match and semantic) exclude `Rejected` entries — otherwise a Rejected entry would permanently block resubmission of identical content. Drafts and Approved entries still dedup as before.
 
 Soft-deleting a `Tenant = "shared"` entry requires `expertise.write.approve` (returns 403 otherwise — 404 would mislead since the caller can read the entry).
 

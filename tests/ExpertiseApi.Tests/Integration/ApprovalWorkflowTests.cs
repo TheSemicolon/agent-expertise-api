@@ -435,6 +435,165 @@ public class ApprovalWorkflowTests : IAsyncLifetime
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
+
+    [Fact]
+    public async Task Patch_OnRejectedByDraftCaller_RegressesToDraft_ClearsRejectionReason()
+    {
+        // Symmetric to Patch_OnApprovedByDraftCaller_RegressesToDraft. A write.draft caller
+        // editing a Rejected entry resets it to Draft and clears rejection metadata so the
+        // author can resubmit content after addressing the rejection reason.
+        ExpertiseEntry seeded;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+            seeded = TestHelpers.SeedEntry(
+                tenant: "test", title: "rejected-content", reviewState: ReviewState.Rejected);
+            seeded.ReviewedBy = "previous-rejector";
+            seeded.ReviewedAt = DateTime.UtcNow;
+            seeded.RejectionReason = "needs more detail";
+            db.ExpertiseEntries.Add(seeded);
+            await db.SaveChangesAsync();
+        }
+
+        using var writer = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+        var response = await writer.PatchAsJsonAsync(
+            $"/expertise/{seeded.Id}",
+            new { body = "edited body — addresses rejection reason" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetProperty("reviewState").GetString().Should().Be("Draft");
+        json.GetProperty("rejectionReason").ValueKind.Should().Be(System.Text.Json.JsonValueKind.Null);
+        json.GetProperty("reviewedBy").ValueKind.Should().Be(System.Text.Json.JsonValueKind.Null);
+        json.GetProperty("reviewedAt").ValueKind.Should().Be(System.Text.Json.JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task Patch_OnRejectedByApproveCaller_PreservesRejected()
+    {
+        // Symmetric to Patch_OnApprovedByApproveCaller_PreservesApproved. A write.approve
+        // caller editing a Rejected entry preserves the Rejected state — the regression
+        // rule only fires for write.draft-only callers.
+        ExpertiseEntry seeded;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+            seeded = TestHelpers.SeedEntry(
+                tenant: "test", title: "rejected-content", reviewState: ReviewState.Rejected);
+            seeded.RejectionReason = "needs more detail";
+            db.ExpertiseEntries.Add(seeded);
+            await db.SaveChangesAsync();
+        }
+
+        using var approver = ClientWithScopes(
+            AuthConstants.ReadScope, AuthConstants.WriteDraftScope, AuthConstants.WriteApproveScope);
+        var response = await approver.PatchAsJsonAsync(
+            $"/expertise/{seeded.Id}",
+            new { body = "edited by approver — stays Rejected" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await response.Content.ReadJsonElementAsync();
+        json.GetProperty("reviewState").GetString().Should().Be("Rejected");
+        json.GetProperty("rejectionReason").GetString().Should().Be("needs more detail");
+    }
+
+    [Fact]
+    public async Task ConcurrentPatch_RaceProducesAtLeastOne409()
+    {
+        // UpdateAsync catches DbUpdateConcurrencyException (xmin race) and returns 409
+        // instead of bubbling as an unhandled 500. Fans out to several concurrent PATCHes
+        // to make the race reliable — exactly two clients can occasionally serialize
+        // (both 200) on a fast in-process test server.
+        var seeded = await SeedDraft(title: "racey-patch");
+
+        using var c0 = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+        using var c1 = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+        using var c2 = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+        using var c3 = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+        using var c4 = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+
+        var tasks = new[]
+        {
+            c0.PatchAsJsonAsync($"/expertise/{seeded.Id}", new { body = "writer 0" }),
+            c1.PatchAsJsonAsync($"/expertise/{seeded.Id}", new { body = "writer 1" }),
+            c2.PatchAsJsonAsync($"/expertise/{seeded.Id}", new { body = "writer 2" }),
+            c3.PatchAsJsonAsync($"/expertise/{seeded.Id}", new { body = "writer 3" }),
+            c4.PatchAsJsonAsync($"/expertise/{seeded.Id}", new { body = "writer 4" })
+        };
+
+        var results = await Task.WhenAll(tasks);
+        var statuses = results.Select(r => (int)r.StatusCode).ToList();
+
+        statuses.Should().Contain(200, "at least one PATCH must win the race");
+        statuses.Should().Contain(409, "at least one PATCH must lose the xmin race and map to 409");
+        statuses.Should().OnlyContain(s => s == 200 || s == 409, "no other status is expected");
+    }
+
+    [Fact]
+    public async Task Create_DuplicateTitleOfRejectedEntry_Succeeds()
+    {
+        // Dedup queries must exclude Rejected entries; otherwise a Rejected entry
+        // permanently blocks resubmission of identical content. Same title + body as
+        // the seeded entry — without the Rejected-exclusion fix this would 409.
+        const string title = "previously-rejected";
+        const string body = "exact body that would otherwise dedup";
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+            var rejected = TestHelpers.SeedEntry(
+                domain: "shared", tenant: "test", title: title, body: body,
+                reviewState: ReviewState.Rejected);
+            rejected.RejectionReason = "prior rejection";
+            db.ExpertiseEntries.Add(rejected);
+            await db.SaveChangesAsync();
+        }
+
+        using var writer = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+        var response = await writer.PostAsJsonAsync("/expertise", new
+        {
+            domain = "shared",
+            title,
+            body,
+            entryType = "Pattern",
+            severity = "Info",
+            source = "test"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task Create_DuplicateTitleOfDraftEntry_Conflicts()
+    {
+        // Dedup-against-Draft is preserved: a same-tenant user submitting the same content
+        // as their own existing draft should still get a 409. Only Rejected entries are
+        // excluded from dedup. Identical title + body triggers FindExactMatchAsync in
+        // DeduplicationService.
+        const string title = "in-progress-draft";
+        const string body = "exact body content for dedup match";
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ExpertiseDbContext>();
+            var draft = TestHelpers.SeedEntry(
+                domain: "shared", tenant: "test", title: title, body: body,
+                reviewState: ReviewState.Draft);
+            db.ExpertiseEntries.Add(draft);
+            await db.SaveChangesAsync();
+        }
+
+        using var writer = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+        var response = await writer.PostAsJsonAsync("/expertise", new
+        {
+            domain = "shared",
+            title,
+            body,
+            entryType = "Pattern",
+            severity = "Info",
+            source = "test"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
 }
 
 [Collection("Postgres")]

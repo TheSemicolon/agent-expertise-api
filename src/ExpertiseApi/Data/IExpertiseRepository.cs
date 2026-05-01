@@ -47,10 +47,14 @@ public interface IExpertiseRepository
     /// <summary>
     /// Applies the caller-supplied delegate to the entry, then commits. State-regression
     /// rule (ADR-003): when a <c>write.draft</c>-only caller mutates an <c>Approved</c>
-    /// entry, the entry is reset to <c>Draft</c>; <c>write.approve</c> callers preserve
-    /// <c>Approved</c> state. The state regression and audit row are written atomically.
+    /// or <c>Rejected</c> entry, the entry is reset to <c>Draft</c> and review metadata
+    /// (<c>ReviewedBy</c>, <c>ReviewedAt</c>, <c>RejectionReason</c>) is cleared;
+    /// <c>write.approve</c> callers preserve the source state. The state regression and
+    /// audit row are written atomically. Returns <see cref="WriteOutcome.NotFound"/> when
+    /// the entry is missing or in another tenant; <see cref="WriteOutcome.ConcurrentConflict"/>
+    /// when an <c>xmin</c> race is lost.
     /// </summary>
-    Task<ExpertiseEntry?> UpdateAsync(Guid id, TenantContext ctx, Func<ExpertiseEntry, Task> applyUpdates, CancellationToken ct = default);
+    Task<(WriteOutcome Outcome, ExpertiseEntry? Entry)> UpdateAsync(Guid id, TenantContext ctx, Func<ExpertiseEntry, Task> applyUpdates, CancellationToken ct = default);
 
     /// <summary>
     /// Soft-deletes by setting <see cref="ExpertiseEntry.DeprecatedAt"/>. Soft-deleting a
