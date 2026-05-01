@@ -2,15 +2,16 @@ name: Dependabot auto-merge
 
 on: pull_request_target
 
-permissions:
-  contents: write
-  pull-requests: write
-
 jobs:
   auto-merge:
-    if: github.actor == 'dependabot[bot]'
+    # Read PR author from the immutable webhook payload, not the runtime actor
+    # (github.actor can shift on re-runs and PR comments).
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
 
     steps:
       - name: Fetch Dependabot metadata
@@ -18,7 +19,9 @@ jobs:
         uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2.4.0
 
       - name: Enable auto-merge for patch and minor
-        if: steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor'
+        if: |
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.update-type == 'version-update:semver-minor'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
