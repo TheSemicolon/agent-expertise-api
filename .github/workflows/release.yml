@@ -4,16 +4,23 @@ on:
   push:
     branches: [main]
 
+# Default to least-priv at the workflow level; jobs scope up only what they need.
 permissions:
-  contents: write
-  packages: write
-  issues: write
-  pull-requests: write
+  contents: read
+
+# Never cancel a release in flight; only one release runs at a time per ref.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
     name: Semantic Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write       # tag + commit changelog
+      issues: write         # release-notes / issue comments
+      pull-requests: write  # release-notes / PR comments
     outputs:
       new-release-published: ${{ steps.semantic.outputs.new_release_published }}
       new-release-version: ${{ steps.semantic.outputs.new_release_version }}
@@ -35,6 +42,9 @@ jobs:
     if: needs.release.outputs.new-release-published == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read    # checkout
+      packages: write   # push to GHCR
 
     steps:
       - name: Checkout
