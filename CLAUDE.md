@@ -311,7 +311,7 @@ Findings flow into the GitHub Security tab (Code scanning + Dependabot + Secret 
 
 Triggers for CodeQL, Trivy, and Hadolint: push to `main`/`dev`, pull requests targeting `main`/`dev`, weekly schedule (Sunday 06:00 UTC), and manual dispatch.
 
-The .NET analyzers run as **warnings**, not errors. The build is green with the existing 201 main-project warnings; the cleanup is tracked separately. The test project overrides `<AnalysisMode>Minimum</AnalysisMode>` to suppress xUnit conventions (underscore method names, `Random` for test data) that produce false-positive security findings.
+The .NET analyzers run as **warnings**, not errors. The build is green with the current main-project warning baseline (~223 as of 2026-04-30, up from 201 at PR #68 due to feature work in PRs #36, #37, #52, #53, #59, #60); the cleanup is tracked separately. Top contributors: CA2007 (ConfigureAwait — generally noise in ASP.NET Core), CA1515 (consider internal types), CA1062 (null-arg validation), CA1861 (static readonly arrays), CA1848 (LoggerMessage delegates). The test project overrides `<AnalysisMode>Minimum</AnalysisMode>` to suppress xUnit conventions (underscore method names, `Random` for test data) that produce false-positive security findings.
 
 See `adrs/004-security-scanning-stack.md` for the design rationale and known gaps (no reachability-aware SCA, no API security spec analysis).
 
