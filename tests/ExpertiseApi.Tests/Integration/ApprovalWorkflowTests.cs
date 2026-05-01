@@ -504,29 +504,29 @@ public class ApprovalWorkflowTests : IAsyncLifetime
         // instead of bubbling as an unhandled 500. Fans out to several concurrent PATCHes
         // to make the race reliable — exactly two clients can occasionally serialize
         // (both 200) on a fast in-process test server.
-        const int concurrency = 5;
         var seeded = await SeedDraft(title: "racey-patch");
-        var clients = Enumerable.Range(0, concurrency)
-            .Select(_ => ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope))
-            .ToArray();
 
-        try
+        using var c0 = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+        using var c1 = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+        using var c2 = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+        using var c3 = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+        using var c4 = ClientWithScopes(AuthConstants.ReadScope, AuthConstants.WriteDraftScope);
+
+        var tasks = new[]
         {
-            var tasks = clients
-                .Select((c, i) => c.PatchAsJsonAsync($"/expertise/{seeded.Id}", new { body = $"writer {i}" }))
-                .ToArray();
+            c0.PatchAsJsonAsync($"/expertise/{seeded.Id}", new { body = "writer 0" }),
+            c1.PatchAsJsonAsync($"/expertise/{seeded.Id}", new { body = "writer 1" }),
+            c2.PatchAsJsonAsync($"/expertise/{seeded.Id}", new { body = "writer 2" }),
+            c3.PatchAsJsonAsync($"/expertise/{seeded.Id}", new { body = "writer 3" }),
+            c4.PatchAsJsonAsync($"/expertise/{seeded.Id}", new { body = "writer 4" })
+        };
 
-            var results = await Task.WhenAll(tasks);
-            var statuses = results.Select(r => (int)r.StatusCode).ToList();
+        var results = await Task.WhenAll(tasks);
+        var statuses = results.Select(r => (int)r.StatusCode).ToList();
 
-            statuses.Should().Contain(200, "at least one PATCH must win the race");
-            statuses.Should().Contain(409, "at least one PATCH must lose the xmin race and map to 409");
-            statuses.Should().OnlyContain(s => s == 200 || s == 409, "no other status is expected");
-        }
-        finally
-        {
-            foreach (var c in clients) c.Dispose();
-        }
+        statuses.Should().Contain(200, "at least one PATCH must win the race");
+        statuses.Should().Contain(409, "at least one PATCH must lose the xmin race and map to 409");
+        statuses.Should().OnlyContain(s => s == 200 || s == 409, "no other status is expected");
     }
 
     [Fact]
