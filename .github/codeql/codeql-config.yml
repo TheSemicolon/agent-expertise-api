@@ -1,0 +1,13 @@
+name: CodeQL config
+
+# Excludes generated source-generator output and build artifacts from CodeQL
+# analysis. Source-generator output (notably from
+# Microsoft.AspNetCore.OpenApi.SourceGenerators under obj/Release/.../generated/)
+# is third-party code we don't author and can't reasonably fix; including it
+# produces ~6 false-positive alerts (cs/constant-condition, cs/linq/missed-select,
+# cs/nested-if-statements, cs/useless-assignment-to-local) that drown the real
+# findings.
+paths-ignore:
+  - '**/obj/**'
+  - '**/bin/**'
+  - '**/*.generated.cs'
