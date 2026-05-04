@@ -1,6 +1,5 @@
 using System.Security.Claims;
 using ExpertiseApi.Auth;
-using FluentAssertions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 

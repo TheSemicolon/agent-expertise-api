@@ -1,6 +1,5 @@
 using System.Text.Encodings.Web;
 using ExpertiseApi.Auth;
-using FluentAssertions;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;

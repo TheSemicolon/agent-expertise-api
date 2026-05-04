@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
 using ExpertiseApi.Tests.Infrastructure;
-using FluentAssertions;
 
 namespace ExpertiseApi.Tests.Integration;
 
