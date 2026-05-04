@@ -1,6 +1,6 @@
 namespace ExpertiseApi.Models;
 
-public class ExpertiseAuditLog
+internal class ExpertiseAuditLog
 {
     public Guid Id { get; set; }
 

@@ -7,7 +7,7 @@ namespace ExpertiseApi.Auth;
 /// treats that as "no filter" (CLI / design-time) and falls back to the explicit
 /// repository <c>Where</c> clauses for safety.
 /// </summary>
-public sealed class HttpTenantContextAccessor(IHttpContextAccessor httpContextAccessor)
+internal sealed class HttpTenantContextAccessor(IHttpContextAccessor httpContextAccessor)
     : ITenantContextAccessor
 {
     public string? Tenant =>
@@ -18,7 +18,7 @@ public sealed class HttpTenantContextAccessor(IHttpContextAccessor httpContextAc
 /// Always returns <c>null</c>. Used by <see cref="Data.DesignTimeDbContextFactory"/>
 /// so <c>dotnet ef</c> tooling can construct a DbContext without an HTTP scope.
 /// </summary>
-public sealed class NoOpTenantContextAccessor : ITenantContextAccessor
+internal sealed class NoOpTenantContextAccessor : ITenantContextAccessor
 {
     public string? Tenant => null;
 }

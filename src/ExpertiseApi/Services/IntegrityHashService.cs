@@ -4,7 +4,7 @@ using ExpertiseApi.Models;
 
 namespace ExpertiseApi.Services;
 
-public static class IntegrityHashService
+internal static class IntegrityHashService
 {
     public static string Compute(
         string tenant,

@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace ExpertiseApi.Endpoints;
 
-public static class SemanticSearchEndpoints
+internal static class SemanticSearchEndpoints
 {
     public static RouteGroupBuilder MapSemanticSearchEndpoints(this WebApplication app)
     {

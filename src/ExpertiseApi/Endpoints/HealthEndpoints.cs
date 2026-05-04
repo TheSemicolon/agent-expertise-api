@@ -1,6 +1,6 @@
 namespace ExpertiseApi.Endpoints;
 
-public static class HealthEndpoints
+internal static class HealthEndpoints
 {
     public static void MapHealthEndpoints(this WebApplication app)
     {

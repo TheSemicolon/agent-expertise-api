@@ -1,6 +1,6 @@
 namespace ExpertiseApi.Models;
 
-public enum AuditAction
+internal enum AuditAction
 {
     Created,
     Updated,

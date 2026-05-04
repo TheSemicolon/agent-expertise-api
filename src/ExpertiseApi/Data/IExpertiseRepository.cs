@@ -15,7 +15,7 @@ namespace ExpertiseApi.Data;
 /// against the entry-mutated-but-no-audit-row failure mode.
 /// </para>
 /// </summary>
-public interface IExpertiseRepository
+internal interface IExpertiseRepository
 {
     Task<ExpertiseEntry?> GetByIdAsync(Guid id, TenantContext ctx, CancellationToken ct = default);
 
@@ -96,7 +96,7 @@ public interface IExpertiseRepository
 /// <summary>
 /// Outcome of a write operation that can fail for reasons other than "not found."
 /// </summary>
-public enum WriteOutcome
+internal enum WriteOutcome
 {
     Success,
     NotFound,
@@ -112,7 +112,7 @@ public enum WriteOutcome
 /// Cursor-paginated audit log query. Cursor is <c>(AfterTimestamp, AfterId)</c> for
 /// keyset pagination ordered by <c>(Timestamp DESC, Id)</c>.
 /// </summary>
-public record AuditLogFilter(
+internal record AuditLogFilter(
     Guid? EntryId = null,
     string? Principal = null,
     AuditAction? Action = null,

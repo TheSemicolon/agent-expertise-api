@@ -1,6 +1,6 @@
 namespace ExpertiseApi.Auth;
 
-public static class AuthConstants
+internal static class AuthConstants
 {
     public const string ScopeClaimType = "scope";
 
@@ -16,7 +16,7 @@ public static class AuthConstants
     /// </summary>
     public const string LegacyWriteScope = "expertise.write";
 
-    public static class Policies
+    internal static class Policies
     {
         public const string ReadAccess = "ReadAccess";
         public const string WriteAccess = "WriteAccess";

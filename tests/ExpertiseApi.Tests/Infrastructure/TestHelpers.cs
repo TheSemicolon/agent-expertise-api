@@ -9,17 +9,17 @@ using Pgvector;
 
 namespace ExpertiseApi.Tests.Infrastructure;
 
-public static class TestHelpers
+internal static class TestHelpers
 {
-    public const string TestApiKey = "test-api-key-12345";
-    public const string TestTenant = "test";
+    internal const string TestApiKey = "test-api-key-12345";
+    internal const string TestTenant = "test";
 
     /// <summary>
     /// Builds a <see cref="TenantContext"/> for direct repository calls in tests
     /// (i.e., outside the HTTP request pipeline). Defaults to read+draft scopes;
     /// callers that need approve/admin can pass them explicitly.
     /// </summary>
-    public static TenantContext CreateTenantContext(
+    internal static TenantContext CreateTenantContext(
         string tenant = TestTenant,
         params string[] scopes)
     {
@@ -40,23 +40,23 @@ public static class TestHelpers
             Scopes: scopeSet);
     }
 
-    public static readonly JsonSerializerOptions JsonOptions = new()
+    internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
         Converters = { new JsonStringEnumConverter() }
     };
 
-    public static async Task<T?> ReadJsonAsync<T>(this HttpContent content)
+    internal static async Task<T?> ReadJsonAsync<T>(this HttpContent content)
         => await content.ReadFromJsonAsync<T>(JsonOptions);
 
-    public static async Task<JsonElement> ReadJsonElementAsync(this HttpContent content)
+    internal static async Task<JsonElement> ReadJsonElementAsync(this HttpContent content)
     {
         var stream = await content.ReadAsStreamAsync();
         var doc = await JsonDocument.ParseAsync(stream);
         return doc.RootElement.Clone();
     }
 
-    public static HttpClient CreateAuthenticatedClient(ApiFactory factory)
+    internal static HttpClient CreateAuthenticatedClient(ApiFactory factory)
     {
         var client = factory.CreateClient();
         client.DefaultRequestHeaders.Authorization =
@@ -64,10 +64,10 @@ public static class TestHelpers
         return client;
     }
 
-    public static HttpClient CreateUnauthenticatedClient(ApiFactory factory)
+    internal static HttpClient CreateUnauthenticatedClient(ApiFactory factory)
         => factory.CreateClient();
 
-    public static ExpertiseEntry SeedEntry(
+    internal static ExpertiseEntry SeedEntry(
         string domain = "shared",
         string title = "Test entry",
         string body = "Test body content for search indexing",
@@ -94,7 +94,7 @@ public static class TestHelpers
         };
     }
 
-    public static Vector CreateTestVector(int dimensions = 384)
+    internal static Vector CreateTestVector(int dimensions = 384)
     {
         var values = new float[dimensions];
         var rng = new Random(42);

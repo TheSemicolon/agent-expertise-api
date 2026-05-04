@@ -5,7 +5,7 @@ using Pgvector;
 
 namespace ExpertiseApi.Models;
 
-public class ExpertiseEntry
+internal class ExpertiseEntry
 {
     public Guid Id { get; set; }
 

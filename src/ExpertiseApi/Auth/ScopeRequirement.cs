@@ -2,12 +2,12 @@ using Microsoft.AspNetCore.Authorization;
 
 namespace ExpertiseApi.Auth;
 
-public sealed class ScopeRequirement(string scope) : IAuthorizationRequirement
+internal sealed class ScopeRequirement(string scope) : IAuthorizationRequirement
 {
     public string Scope { get; } = scope;
 }
 
-public sealed class ScopeAuthorizationHandler : AuthorizationHandler<ScopeRequirement>
+internal sealed class ScopeAuthorizationHandler : AuthorizationHandler<ScopeRequirement>
 {
     private readonly IHttpContextAccessor _httpContextAccessor;
 

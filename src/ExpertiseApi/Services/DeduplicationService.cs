@@ -7,13 +7,13 @@ using Pgvector;
 
 namespace ExpertiseApi.Services;
 
-public class DeduplicationOptions
+internal class DeduplicationOptions
 {
     public bool Enabled { get; set; } = true;
     public double SemanticThreshold { get; set; } = 0.10;
 }
 
-public class DeduplicationService(IExpertiseRepository repo, IOptions<DeduplicationOptions> options)
+internal class DeduplicationService(IExpertiseRepository repo, IOptions<DeduplicationOptions> options)
 {
     public async Task<(bool IsDuplicate, ExpertiseEntry? Existing)> CheckAsync(
         CreateExpertiseRequest request, Vector embedding, TenantContext ctx, CancellationToken ct = default)

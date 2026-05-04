@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 
 namespace ExpertiseApi.Auth;
 
-public class ApiKeyAuthHandler(
+internal class ApiKeyAuthHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options,
     ILoggerFactory logger,
     UrlEncoder encoder,

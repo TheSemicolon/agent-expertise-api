@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ExpertiseApi.Cli;
 
-public static class ReembedCommand
+internal static class ReembedCommand
 {
     public static bool IsReembedRequested(string[] args) =>
         args.Length > 0 && args[0].Equals("reembed", StringComparison.OrdinalIgnoreCase);
