@@ -59,7 +59,6 @@ public class ApiFactory : WebApplicationFactory<Program>
                 .Returns(callInfo =>
                 {
                     var inputs = callInfo.ArgAt<IEnumerable<string>>(0).ToList();
-                    var embeddings = new List<GeneratedEmbeddings<Embedding<float>>>();
                     var result = new GeneratedEmbeddings<Embedding<float>>();
                     foreach (var _ in inputs)
                     {

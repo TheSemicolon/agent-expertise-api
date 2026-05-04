@@ -53,13 +53,14 @@ public static class JwtTenantContextEvents
     {
         foreach (var claim in issuer.ScopeClaims)
         {
-            foreach (var value in principal.FindAll(claim).Select(c => c.Value))
-            {
-                if (string.IsNullOrWhiteSpace(value))
-                    continue;
+            // Entra `scp` is space-separated; Authentik `scope` is space-separated.
+            // Entra `roles` is repeated claim per value (one per array entry).
+            var values = principal.FindAll(claim)
+                .Select(c => c.Value)
+                .Where(v => !string.IsNullOrWhiteSpace(v));
 
-                // Entra `scp` is space-separated; Authentik `scope` is space-separated.
-                // Entra `roles` is repeated claim per value (one per array entry).
+            foreach (var value in values)
+            {
                 foreach (var scope in value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                     yield return scope;
             }
@@ -104,13 +105,9 @@ public static class JwtTenantContextEvents
 
     private static string? MapTenantFromGroups(ClaimsPrincipal principal, OidcIssuerOptions issuer)
     {
-        foreach (var group in principal.FindAll(issuer.GroupClaim).Select(c => c.Value))
-        {
-            if (issuer.GroupToTenantMapping.TryGetValue(group, out var tenant))
-                return tenant;
-        }
-
-        return null;
+        return principal.FindAll(issuer.GroupClaim)
+            .Select(c => issuer.GroupToTenantMapping.TryGetValue(c.Value, out var tenant) ? tenant : null)
+            .FirstOrDefault(t => t is not null);
     }
 
     /// <summary>

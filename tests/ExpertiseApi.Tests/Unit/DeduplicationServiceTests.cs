@@ -72,7 +72,7 @@ public class DeduplicationServiceTests
         _repo.FindExactMatchAsync("shared", "Test", Arg.Any<TenantContext>(), Arg.Any<CancellationToken>())
             .Returns(existingEntry);
         _repo.FindNearestInDomainAsync("shared", _testVector, 0.10, Arg.Any<TenantContext>(), Arg.Any<CancellationToken>())
-            .Returns((ExpertiseEntry?)null);
+            .Returns(default(ExpertiseEntry));
 
         var (isDuplicate, _) = await service.CheckAsync(request, _testVector, _ctx);
 
@@ -88,7 +88,7 @@ public class DeduplicationServiceTests
         var nearEntry = TestHelpers.SeedEntry(title: "Similar entry");
 
         _repo.FindExactMatchAsync("shared", "Test", Arg.Any<TenantContext>(), Arg.Any<CancellationToken>())
-            .Returns((ExpertiseEntry?)null);
+            .Returns(default(ExpertiseEntry));
         _repo.FindNearestInDomainAsync("shared", _testVector, 0.10, Arg.Any<TenantContext>(), Arg.Any<CancellationToken>())
             .Returns(nearEntry);
 
@@ -105,9 +105,9 @@ public class DeduplicationServiceTests
         var request = CreateRequest();
 
         _repo.FindExactMatchAsync("shared", "Test", Arg.Any<TenantContext>(), Arg.Any<CancellationToken>())
-            .Returns((ExpertiseEntry?)null);
+            .Returns(default(ExpertiseEntry));
         _repo.FindNearestInDomainAsync("shared", _testVector, 0.10, Arg.Any<TenantContext>(), Arg.Any<CancellationToken>())
-            .Returns((ExpertiseEntry?)null);
+            .Returns(default(ExpertiseEntry));
 
         var (isDuplicate, existing) = await service.CheckAsync(request, _testVector, _ctx);
 
