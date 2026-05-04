@@ -8,6 +8,14 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="ExpertiseApi.Tests" />
+    <!--
+      Castle DynamicProxy (used by NSubstitute, Moq, etc.) needs visibility on
+      `internal` interfaces it proxies. Without this, Substitute.For<IInternalInterface>()
+      throws TypeLoadException at first invocation — silent at build time, silent at
+      xUnit discovery. The assembly name "DynamicProxyGenAssembly2" is a Castle
+      convention and is not configurable. See ADR-006.
+    -->
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
   </ItemGroup>
 
   <ItemGroup>

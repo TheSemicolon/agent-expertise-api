@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore.Design;
 
 namespace ExpertiseApi.Data;
 
-public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<ExpertiseDbContext>
+internal class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<ExpertiseDbContext>
 {
     public ExpertiseDbContext CreateDbContext(string[] args)
     {

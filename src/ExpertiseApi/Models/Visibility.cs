@@ -1,6 +1,6 @@
 namespace ExpertiseApi.Models;
 
-public enum Visibility
+internal enum Visibility
 {
     Private,
     Shared

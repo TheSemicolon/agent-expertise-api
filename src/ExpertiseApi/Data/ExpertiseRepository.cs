@@ -7,7 +7,7 @@ using Pgvector.EntityFrameworkCore;
 
 namespace ExpertiseApi.Data;
 
-public class ExpertiseRepository(
+internal class ExpertiseRepository(
     ExpertiseDbContext db,
     IHttpContextAccessor httpContextAccessor,
     ILogger<ExpertiseRepository> logger) : IExpertiseRepository

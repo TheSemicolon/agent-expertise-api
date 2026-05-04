@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ExpertiseApi.Data;
 
-public class ExpertiseDbContext(
+internal class ExpertiseDbContext(
     DbContextOptions<ExpertiseDbContext> options,
     ITenantContextAccessor tenantAccessor) : DbContext(options)
 {

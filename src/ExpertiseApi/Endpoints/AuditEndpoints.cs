@@ -9,7 +9,7 @@ namespace ExpertiseApi.Endpoints;
 /// Cross-tenant audit log queries. Admin-only per ADR-003 line 32. Tenant-scoped audit
 /// reads for non-admin reviewers are deferred (tracked separately).
 /// </summary>
-public static class AuditEndpoints
+internal static class AuditEndpoints
 {
     public static RouteGroupBuilder MapAuditEndpoints(this WebApplication app)
     {

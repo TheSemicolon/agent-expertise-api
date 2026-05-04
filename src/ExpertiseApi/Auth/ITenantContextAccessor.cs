@@ -12,7 +12,7 @@ namespace ExpertiseApi.Auth;
 /// <see cref="Data.IExpertiseRepository"/> remain the primary safeguard.
 /// </para>
 /// </summary>
-public interface ITenantContextAccessor
+internal interface ITenantContextAccessor
 {
     string? Tenant { get; }
 }

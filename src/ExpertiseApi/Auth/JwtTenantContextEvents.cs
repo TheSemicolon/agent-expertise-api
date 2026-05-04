@@ -8,7 +8,7 @@ namespace ExpertiseApi.Auth;
 /// JwtBearer schemes — each scheme is registered with its <see cref="OidcIssuerOptions"/>
 /// in the scheme's <see cref="JwtBearerEvents.OnTokenValidated"/>.
 /// </summary>
-public static class JwtTenantContextEvents
+internal static class JwtTenantContextEvents
 {
     public static Task BuildTenantContext(TokenValidatedContext ctx, OidcIssuerOptions issuer)
     {

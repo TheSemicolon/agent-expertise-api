@@ -8,7 +8,7 @@ using Pgvector;
 
 namespace ExpertiseApi.Endpoints;
 
-public static class ExpertiseEndpoints
+internal static class ExpertiseEndpoints
 {
     public static RouteGroupBuilder MapExpertiseEndpoints(this WebApplication app)
     {
@@ -428,15 +428,15 @@ public static class ExpertiseEndpoints
     private const int MaxRejectionReasonLength = 2000;
 }
 
-public enum BatchEntryStatus { Created, Duplicate, Rejected, Failed }
+internal enum BatchEntryStatus { Created, Duplicate, Rejected, Failed }
 
-public record BatchEntryResult(
+internal record BatchEntryResult(
     int Index,
     BatchEntryStatus Status,
     Guid? Id,
     string? Error);
 
-public record CreateExpertiseRequest(
+internal record CreateExpertiseRequest(
     string Domain,
     string Title,
     string Body,
@@ -454,7 +454,7 @@ public record CreateExpertiseRequest(
     /// </summary>
     string? Tenant = null);
 
-public record UpdateExpertiseRequest(
+internal record UpdateExpertiseRequest(
     string? Domain = null,
     string? Title = null,
     string? Body = null,
@@ -464,6 +464,6 @@ public record UpdateExpertiseRequest(
     List<string>? Tags = null,
     string? SourceVersion = null);
 
-public record ApproveExpertiseRequest(Visibility? Visibility = null);
+internal record ApproveExpertiseRequest(Visibility? Visibility = null);
 
-public record RejectExpertiseRequest(string RejectionReason);
+internal record RejectExpertiseRequest(string RejectionReason);

@@ -14,13 +14,13 @@ namespace ExpertiseApi.Auth;
 /// has all four scopes present (admin ⊇ approve ⊇ draft ⊇ read).
 /// </para>
 /// </summary>
-public sealed record TenantContext(
+internal sealed record TenantContext(
     string? Tenant,
     ClaimsPrincipal Principal,
     string? Agent,
     IReadOnlySet<string> Scopes);
 
-public static class TenantContextHttpExtensions
+internal static class TenantContextHttpExtensions
 {
     public static TenantContext? GetTenantContext(this HttpContext ctx) =>
         ctx.Features.Get<TenantContext>();

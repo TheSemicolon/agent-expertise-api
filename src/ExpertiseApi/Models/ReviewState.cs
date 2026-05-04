@@ -1,6 +1,6 @@
 namespace ExpertiseApi.Models;
 
-public enum ReviewState
+internal enum ReviewState
 {
     Draft,
     Approved,

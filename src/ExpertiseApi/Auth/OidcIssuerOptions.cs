@@ -1,6 +1,6 @@
 namespace ExpertiseApi.Auth;
 
-public class OidcIssuerOptions
+internal class OidcIssuerOptions
 {
     /// <summary>
     /// Logical name for the issuer (e.g. "Entra", "Authentik"). Used as the JwtBearer scheme name.
@@ -52,7 +52,7 @@ public class OidcIssuerOptions
     public string GroupClaim { get; set; } = "groups";
 }
 
-public enum TenantSource
+internal enum TenantSource
 {
     /// <summary>Walk group claims through <see cref="OidcIssuerOptions.GroupToTenantMapping"/>.</summary>
     Groups,

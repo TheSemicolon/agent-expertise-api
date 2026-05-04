@@ -147,4 +147,13 @@ catch (Exception ex)
 }
 finally { Log.CloseAndFlush(); }
 
+// WebApplicationFactory<Program> requires Program to be visible to the test
+// assembly via the C# type system. [InternalsVisibleTo] does not satisfy the
+// constraint because WebApplicationFactory<TEntryPoint> lives in
+// Microsoft.AspNetCore.Mvc.Testing, a third-party assembly. Keep public.
+// See ADR-006.
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Design",
+    "CA1515:Consider making public types internal",
+    Justification = "Public anchor for WebApplicationFactory<Program> in tests; see ADR-006.")]
 public partial class Program;

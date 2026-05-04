@@ -7,7 +7,7 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace ExpertiseApi.Auth;
 
-public static class AuthExtensions
+internal static class AuthExtensions
 {
     public const string BearerScheme = "Bearer";
 

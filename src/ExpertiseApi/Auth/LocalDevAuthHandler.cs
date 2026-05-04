@@ -16,7 +16,7 @@ namespace ExpertiseApi.Auth;
 /// value is passed through verbatim.
 /// </para>
 /// </summary>
-public class LocalDevAuthHandler(
+internal class LocalDevAuthHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options,
     ILoggerFactory logger,
     UrlEncoder encoder)

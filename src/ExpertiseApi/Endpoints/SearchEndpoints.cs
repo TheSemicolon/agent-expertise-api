@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace ExpertiseApi.Endpoints;
 
-public static class SearchEndpoints
+internal static class SearchEndpoints
 {
     public static RouteGroupBuilder MapSearchEndpoints(this WebApplication app)
     {

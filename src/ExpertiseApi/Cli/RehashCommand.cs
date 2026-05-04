@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ExpertiseApi.Cli;
 
-public static class RehashCommand
+internal static class RehashCommand
 {
     public static bool IsRehashRequested(string[] args) =>
         args.Length > 0 && args[0].Equals("rehash", StringComparison.OrdinalIgnoreCase);
