@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text.Json;
 using ExpertiseApi.Models;
@@ -6,6 +7,8 @@ namespace ExpertiseApi.Services;
 
 internal static class IntegrityHashService
 {
+    [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase",
+        Justification = "Output is hex-encoded SHA-256 (0-9, a-f only). The Turkish-locale gotcha that motivates the rule cannot apply to ASCII hex characters.")]
     public static string Compute(
         string tenant,
         string title,

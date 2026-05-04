@@ -74,7 +74,7 @@ public class ScopeAuthorizationHandlerTests
         authCtx.HasSucceeded.Should().BeTrue();
     }
 
-    private static HttpContext HttpCtxWithTenant(string? tenant, params string[] scopes)
+    private static DefaultHttpContext HttpCtxWithTenant(string? tenant, params string[] scopes)
     {
         var ctx = new DefaultHttpContext();
         ctx.SetTenantContext(new TenantContext(

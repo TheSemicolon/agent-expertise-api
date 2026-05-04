@@ -51,6 +51,16 @@ jobs:
       - name: Build
         run: dotnet build ExpertiseApi.slnx --configuration Release --no-restore --disable-build-servers
 
+      # Analyzer baseline gate (issue #101, ADR-006). The codebase reached
+      # zero analyzer warnings via PR7a/PR7b/PR7c; this step prevents
+      # regression. Use `dotnet format analyzers` so whitespace/style noise
+      # cannot trip the gate — only analyzer-rule violations do.
+      # Note: --no-restore is intentionally omitted; `dotnet format analyzers`
+      # invokes its own MSBuild instance which doesn't see the prior
+      # restore's output via project.assets.json under all path layouts.
+      - name: Format gate (analyzers must be clean)
+        run: dotnet format analyzers ExpertiseApi.slnx --verify-no-changes
+
       - name: Download ONNX model files
         run: bash scripts/download-models.sh
 

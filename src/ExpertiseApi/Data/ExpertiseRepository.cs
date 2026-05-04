@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using ExpertiseApi.Auth;
 using ExpertiseApi.Models;
 using ExpertiseApi.Services;
@@ -378,6 +379,12 @@ internal class ExpertiseRepository(
             .ToListAsync(ct);
     }
 
+    [SuppressMessage("Globalization", "CA1304:Specify CultureInfo",
+        Justification = "EF Core LINQ expression — translates to SQL LOWER() against the AddTitleLowerIndex; not invoked in C#.")]
+    [SuppressMessage("Globalization", "CA1311:Specify a culture or use an invariant version",
+        Justification = "EF Core LINQ expression — translates to SQL LOWER() against the AddTitleLowerIndex; not invoked in C#.")]
+    [SuppressMessage("Performance", "CA1862:Use the StringComparison overload of String.Equals",
+        Justification = "EF Core does not consistently translate StringComparison overloads to SQL; the .ToLower() pattern matches the dedicated LOWER(title) index introduced by AddTitleLowerIndex.")]
     public async Task<ExpertiseEntry?> FindExactMatchAsync(string domain, string title, TenantContext ctx, CancellationToken ct)
     {
         return await ApplyTenantFilter(db.ExpertiseEntries.AsQueryable(), ctx)

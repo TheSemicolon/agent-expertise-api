@@ -18,6 +18,25 @@ root = true
 # doesn't" — and this is application code.
 dotnet_diagnostic.CA2007.severity = none
 
+# CA1062: validate parameters of public methods are non-null. The codebase has
+# <Nullable>enable</Nullable>; non-null parameters are the type system's
+# contract, not a runtime defensive layer. After the CA1515 internal sweep
+# (ADR-006), only ~20 sites remain (mostly methods on the carve-out types
+# Program/AuthMode and method overrides where the base interface declares the
+# parameter as non-nullable). Sweeping `ArgumentNullException.ThrowIfNull` at
+# every public method entry duplicates the type system's promise without
+# adding behavior in any reachable scenario. Suppress globally; rely on NRT.
+dotnet_diagnostic.CA1062.severity = none
+
+# CA1848: use LoggerMessage source-generated delegates instead of LogXxx
+# extension methods. The optimization eliminates the boxing/parameter-array
+# allocation per log call. For an internal API service at moderate traffic
+# the per-request perf delta is sub-millisecond; converting the ~32 call
+# sites to partial methods would meaningfully reduce log-statement
+# readability. Revisit only if profiling shows a hot-path log call as a
+# meaningful fraction of request latency.
+dotnet_diagnostic.CA1848.severity = none
+
 # Test code: CA1861 fires on every `new[] { ... }` literal passed as a method
 # argument, suggesting it be hoisted to a static readonly field. In test
 # arrange/act blocks the array is allocated once per test invocation and
@@ -33,3 +52,21 @@ dotnet_diagnostic.CA1861.severity = none
 # applied to CA1515.
 [**/Migrations/*.cs]
 dotnet_diagnostic.CA1861.severity = none
+
+# CA1308: the data layer uses `.ToLowerInvariant()` for case-insensitive title
+# matching against PostgreSQL columns indexed via LOWER(). The rule's
+# preference for ToUpperInvariant() exists because some Turkish characters
+# round-trip differently through lowercase, but the data here is constrained
+# to the ASCII subset used by entry titles and the SQL index is keyed on
+# LOWER(). Forcing ToUpperInvariant would break the index match.
+[src/ExpertiseApi/Data/*.cs]
+dotnet_diagnostic.CA1308.severity = none
+
+# CA1873: avoid expensive log argument evaluation when logging is disabled.
+# The CLI commands (reembed, rehash) log per-batch progress as one-shot
+# maintenance operations — they always run with logging enabled by the
+# operator invoking the command. Wrapping every LogXxx in `if
+# (logger.IsEnabled(...))` adds noise without measurable benefit for these
+# code paths.
+[src/ExpertiseApi/Cli/*.cs]
+dotnet_diagnostic.CA1873.severity = none
