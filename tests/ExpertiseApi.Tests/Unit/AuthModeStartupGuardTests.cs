@@ -1,5 +1,4 @@
 using ExpertiseApi.Auth;
-using FluentAssertions;
 using Microsoft.Extensions.Hosting;
 
 namespace ExpertiseApi.Tests.Unit;

@@ -1,6 +1,5 @@
 using ExpertiseApi.Models;
 using ExpertiseApi.Services;
-using FluentAssertions;
 
 namespace ExpertiseApi.Tests.Unit;
 

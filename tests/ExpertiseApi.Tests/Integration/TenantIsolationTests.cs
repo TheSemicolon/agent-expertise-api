@@ -5,7 +5,6 @@ using ExpertiseApi.Auth;
 using ExpertiseApi.Data;
 using ExpertiseApi.Models;
 using ExpertiseApi.Tests.Infrastructure;
-using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ExpertiseApi.Tests.Integration;

@@ -4,7 +4,6 @@ using ExpertiseApi.Endpoints;
 using ExpertiseApi.Models;
 using ExpertiseApi.Services;
 using ExpertiseApi.Tests.Infrastructure;
-using FluentAssertions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Pgvector;
