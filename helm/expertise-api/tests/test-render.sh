@@ -171,6 +171,47 @@ else
     err "migrations-opt-out" "Migration Job still present when migrations.enabled=false"
 fi
 
+# 19. NOTES.txt source contains the ingress URL substring (parameterized on .Values.ingress.hostname)
+# `helm template` does not render NOTES.txt — that's install-output only — so we verify the source
+# template carries the substrings we expect post-render. Combined with #21 (helm lint --strict)
+# below, this catches both missing content and template-syntax errors.
+if grep -q '{{ .Values.ingress.hostname }}' "$CHART/templates/NOTES.txt"; then
+    ok "notes-url-ingress" "NOTES.txt source references .Values.ingress.hostname"
+else
+    err "notes-url-ingress" "NOTES.txt does not reference .Values.ingress.hostname"
+fi
+
+# 20. NOTES.txt source contains the trustedCidr-empty warning text
+if grep -q 'forwardedHeaders.trustedCidr is empty' "$CHART/templates/NOTES.txt"; then
+    ok "notes-trusted-cidr-warn" "NOTES.txt source contains trustedCidr empty-list warning"
+else
+    err "notes-trusted-cidr-warn" "NOTES.txt missing trustedCidr warning"
+fi
+
+# 21. helm lint --strict catches NOTES.txt template-syntax errors (Go template parse failures)
+lint_out=$(helm lint --strict "$CHART" 2>&1 || true)
+if echo "$lint_out" | grep -qE '0 chart\(s\) failed'; then
+    ok "lint-strict" "helm lint --strict passes (validates NOTES.txt template syntax)"
+else
+    err "lint-strict" "helm lint --strict failed: $lint_out"
+fi
+
+# 22. values.schema.json: rejects auth.mode outside the enum (helm template exits non-zero on schema failure)
+schema_out=$(helm template test-release "$CHART" --set auth.mode=Bogus 2>&1 || true)
+if echo "$schema_out" | grep -q 'auth.mode'; then
+    ok "schema-auth-mode-enum" "values.schema.json rejects invalid auth.mode"
+else
+    err "schema-auth-mode-enum" "values.schema.json did not reject auth.mode=Bogus"
+fi
+
+# 23. values.schema.json: rejects replicaCount=0
+schema_out=$(helm template test-release "$CHART" --set replicaCount=0 2>&1 || true)
+if echo "$schema_out" | grep -qE 'replicaCount|minimum'; then
+    ok "schema-replicacount-min" "values.schema.json rejects replicaCount=0"
+else
+    err "schema-replicacount-min" "values.schema.json did not reject replicaCount=0"
+fi
+
 echo "=================================="
 if [ "$ERRORS" -eq 0 ]; then
     echo "PASS — 0 errors, $WARNINGS warning(s)"
