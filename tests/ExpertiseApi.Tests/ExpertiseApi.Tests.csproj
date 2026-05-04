@@ -15,7 +15,16 @@
     <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.5.0" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.*" />
     <PackageReference Include="NSubstitute" Version="5.*" />
-    <PackageReference Include="FluentAssertions" Version="8.*" />
+    <!--
+      AwesomeAssertions is the community Apache 2.0 fork of FluentAssertions v7.
+      Pinning at the 8.x line preserves the FluentAssertions namespace verbatim,
+      so existing `using FluentAssertions;` statements continue to compile with
+      zero source changes. v9 renamed the namespace to AwesomeAssertions; defer
+      that sweep to a follow-up PR. Dependabot has an explicit ignore rule for
+      the original FluentAssertions package (which is now Xceed-commercial v8+)
+      so it cannot re-land here.
+    -->
+    <PackageReference Include="AwesomeAssertions" Version="8.*" />
     <PackageReference Include="xunit" Version="2.9.*" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.*">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
