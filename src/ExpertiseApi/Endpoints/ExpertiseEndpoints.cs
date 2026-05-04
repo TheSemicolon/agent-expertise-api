@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using ExpertiseApi.Auth;
 using ExpertiseApi.Data;
 using ExpertiseApi.Models;
@@ -170,6 +171,11 @@ public static class ExpertiseEndpoints
         };
     }
 
+    [SuppressMessage("Microsoft.Design", "CA1031:DoNotCatchGeneralExceptionTypes",
+        Justification = "Batch ingest uses per-phase and per-item failure isolation. An unexpected " +
+                        "exception in embedding generation, deduplication, or per-entry create must mark " +
+                        "the affected items as Failed and continue processing the rest. The error is " +
+                        "captured in the BatchEntryResult and surfaced to the caller via the 207 response.")]
     private static async Task<IResult> CreateBatch(
         List<CreateExpertiseRequest> requests,
         HttpContext httpContext,

@@ -62,9 +62,9 @@ public class TenantIsolationTests : IAsyncLifetime
     [Fact]
     public async Task List_OnlyReturnsCallerTenantAndShared()
     {
-        var ownEntry = await SeedEntry(tenant: "test", title: "own-entry");
-        var sharedEntry = await SeedEntry(tenant: "shared", title: "shared-entry");
-        var otherEntry = await SeedEntry(tenant: "other-team", title: "other-entry");
+        _ = await SeedEntry(tenant: "test", title: "own-entry");
+        _ = await SeedEntry(tenant: "shared", title: "shared-entry");
+        _ = await SeedEntry(tenant: "other-team", title: "other-entry");
 
         var response = await _testClient.GetAsync("/expertise");
 

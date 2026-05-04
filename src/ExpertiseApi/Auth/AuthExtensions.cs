@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -149,6 +150,11 @@ public static class AuthExtensions
         });
     }
 
+    [SuppressMessage("Microsoft.Design", "CA1031:DoNotCatchGeneralExceptionTypes",
+        Justification = "Token-shape detection is best-effort. Any parse failure (malformed token, " +
+                        "unrecognized format, unexpected exception in JsonWebTokenHandler) must fall through " +
+                        "to the first issuer's scheme so JwtBearer surfaces a clean 401. Throwing here would " +
+                        "be a worse user experience than the JwtBearer 401.")]
     private static string SelectScheme(HttpContext ctx, AuthMode mode, IReadOnlyList<OidcIssuerOptions> issuers)
     {
         var header = ctx.Request.Headers.Authorization.FirstOrDefault();
@@ -180,7 +186,7 @@ public static class AuthExtensions
                         return match.Name;
                 }
             }
-            catch
+            catch (Exception)
             {
                 // Fall through to first scheme; JwtBearer will reject cleanly.
             }
