@@ -36,6 +36,28 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Sync the Helm chart's appVersion with the just-released image tag so
+      # `helm list` / `helm history` reflect what's actually deployed. The
+      # `[skip ci]` trailer prevents a workflow re-trigger on the resulting
+      # push; semantic-release ignores non-Conventional-Commits messages so
+      # this commit will not influence the next version bump.
+      #
+      # TOCTOU note: the chart trails the image by one commit on main. The
+      # infra repo (agent-expertise-api-infra) sets image.tag explicitly via
+      # the dispatch payload at deploy time, so appVersion is cosmetic for
+      # runtime correctness; the sync exists for `helm list` clarity.
+      - name: Sync Chart.yaml appVersion
+        if: steps.semantic.outputs.new_release_published == 'true'
+        env:
+          NEW_VERSION: ${{ steps.semantic.outputs.new_release_version }}
+        run: |
+          yq -i '.appVersion = strenv(NEW_VERSION)' helm/expertise-api/Chart.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add helm/expertise-api/Chart.yaml
+          git commit -m "chore(helm): sync appVersion to ${NEW_VERSION} [skip ci]"
+          git push
+
   build-and-push:
     name: Build & Push Docker Image
     needs: release
