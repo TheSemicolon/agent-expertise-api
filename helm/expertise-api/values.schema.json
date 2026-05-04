@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "expertise-api Helm chart values",
+  "description": "Schema validating values.yaml for the expertise-api chart. Catches operator misconfigurations at `helm install --dry-run` time instead of API startup time.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["image", "auth", "postgres"],
+  "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of API pod replicas."
+    },
+    "image": {
+      "type": "object",
+      "required": ["repository"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": { "name": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "targetPort": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "hostname": { "type": "string", "minLength": 1 },
+        "clusterIssuer": { "type": "string" }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "required": ["mode", "secretName"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["Oidc", "LocalDev", "ApiKey", "Hybrid"],
+          "description": "Authentication mode. Only `Oidc` is permitted by the API's startup guard outside Development."
+        },
+        "secretName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the Secret carrying API auth env vars (envFrom on the API container)."
+        },
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "issuers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "issuer", "audience"],
+                "properties": {
+                  "name": { "type": "string", "minLength": 1 },
+                  "issuer": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Issuer URL must be byte-exact to the issuer's `iss` claim. Authentik includes a trailing slash; Entra v2 does not."
+                  },
+                  "audience": { "type": "string", "minLength": 1 },
+                  "additionalAudiences": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1 }
+                  },
+                  "scopeClaims": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1 }
+                  },
+                  "tenantSource": {
+                    "type": "string",
+                    "enum": ["CompoundRole", "Groups"]
+                  },
+                  "roleSeparator": { "type": "string", "minLength": 1 },
+                  "groupClaim": { "type": "string", "minLength": 1 },
+                  "groupToTenantMapping": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string", "minLength": 1 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "forwardedHeaders": {
+      "type": "object",
+      "properties": {
+        "trustedCidr": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[1-2][0-9]|3[0-2])$|^([0-9a-fA-F:]+)/([0-9]|[1-9][0-9]|1[01][0-9]|12[0-8])$",
+            "description": "IPv4 or IPv6 CIDR (e.g. 10.42.0.0/16, fd00::/8)."
+          }
+        }
+      }
+    },
+    "api": {
+      "type": "object",
+      "properties": {
+        "resources": { "type": "object" }
+      }
+    },
+    "postgres": {
+      "type": "object",
+      "required": ["image", "secretName"],
+      "properties": {
+        "image": { "type": "string", "minLength": 1 },
+        "storage": { "type": "string", "minLength": 1 },
+        "secretName": { "type": "string", "minLength": 1 },
+        "podCidr": {
+          "type": "string",
+          "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[1-2][0-9]|3[0-2])$"
+        },
+        "resources": { "type": "object" }
+      }
+    },
+    "pgbouncer": {
+      "type": "object",
+      "properties": {
+        "image": { "type": "string", "minLength": 1 },
+        "resources": { "type": "object" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "serviceMonitor": {
+          "type": "object",
+          "properties": {
+            "namespace": { "type": "string" },
+            "interval": { "type": "string", "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$" },
+            "scrapeTimeout": { "type": "string", "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$" },
+            "labels": { "type": "object" }
+          }
+        }
+      }
+    }
+  }
+}
