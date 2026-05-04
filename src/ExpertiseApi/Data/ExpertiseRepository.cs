@@ -380,18 +380,23 @@ internal class ExpertiseRepository(
     }
 
     [SuppressMessage("Globalization", "CA1304:Specify CultureInfo",
-        Justification = "EF Core LINQ expression — translates to SQL LOWER() against the AddTitleLowerIndex; not invoked in C#.")]
+        Justification = "e.Title.ToLower() in this LINQ expression translates to PostgreSQL's LOWER() function and never executes on the .NET runtime; specifying a CultureInfo would not affect the SQL translation. The input parameter is normalized with ToLowerInvariant() above to keep the C#-side value culture-stable.")]
     [SuppressMessage("Globalization", "CA1311:Specify a culture or use an invariant version",
-        Justification = "EF Core LINQ expression — translates to SQL LOWER() against the AddTitleLowerIndex; not invoked in C#.")]
+        Justification = "e.Title.ToLower() in this LINQ expression translates to PostgreSQL's LOWER() function; specifying a culture has no effect on the SQL output.")]
     [SuppressMessage("Performance", "CA1862:Use the StringComparison overload of String.Equals",
         Justification = "EF Core does not consistently translate StringComparison overloads to SQL; the .ToLower() pattern matches the dedicated LOWER(title) index introduced by AddTitleLowerIndex.")]
     public async Task<ExpertiseEntry?> FindExactMatchAsync(string domain, string title, TenantContext ctx, CancellationToken ct)
     {
+        // Normalize the input parameter once with InvariantCulture so the
+        // captured value is culture-stable. The server-side `e.Title.ToLower()`
+        // translates to SQL LOWER(), hitting the AddTitleLowerIndex; both sides
+        // are now deterministic and locale-independent on the .NET runtime.
+        var lowerTitle = title.ToLowerInvariant();
         return await ApplyTenantFilter(db.ExpertiseEntries.AsQueryable(), ctx)
             .Where(e => e.DeprecatedAt == null)
             .Where(e => e.ReviewState != ReviewState.Rejected)
             .Where(e => e.Domain == domain)
-            .Where(e => e.Title.ToLower() == title.ToLower())
+            .Where(e => e.Title.ToLower() == lowerTitle)
             .FirstOrDefaultAsync(ct);
     }
 
