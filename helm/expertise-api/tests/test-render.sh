@@ -155,7 +155,7 @@ else
     err "lint-strict" "helm lint --strict failed: $lint_out"
 fi
 
-# 16. values.schema.json: rejects auth.mode outside the enum (helm template exits non-zero on schema failure)
+# 17. values.schema.json: rejects auth.mode outside the enum (helm template exits non-zero on schema failure)
 schema_out=$(helm template test-release "$CHART" --set auth.mode=Bogus 2>&1 || true)
 if echo "$schema_out" | grep -q 'auth.mode'; then
     ok "schema-auth-mode-enum" "values.schema.json rejects invalid auth.mode"
@@ -163,7 +163,7 @@ else
     err "schema-auth-mode-enum" "values.schema.json did not reject auth.mode=Bogus"
 fi
 
-# 17. values.schema.json: rejects replicaCount=0
+# 18. values.schema.json: rejects replicaCount=0
 schema_out=$(helm template test-release "$CHART" --set replicaCount=0 2>&1 || true)
 if echo "$schema_out" | grep -qE 'replicaCount|minimum'; then
     ok "schema-replicacount-min" "values.schema.json rejects replicaCount=0"
