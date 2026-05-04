@@ -130,6 +130,47 @@ else
     err "no-backup-cronjob" "Backup CronJob still present in chart — should be dropped"
 fi
 
+# 14. ingress.className is read from values (not hardcoded "nginx")
+output=$(helm template test-release "$CHART" --set ingress.className=traefik 2>&1)
+if echo "$output" | grep -q 'ingressClassName: traefik'; then
+    ok "ingress-class-name" "Ingress className reflects values.ingress.className"
+else
+    err "ingress-class-name" "Ingress className did not honor values.ingress.className=traefik"
+fi
+
+# 15. NetworkPolicy renders when networkPolicy.enabled=true (default false)
+output=$(helm template test-release "$CHART" --set networkPolicy.enabled=true 2>&1)
+np_count=$(echo "$output" | grep -c '^kind: NetworkPolicy$' || true)
+if [ "$np_count" -ge 2 ]; then
+    ok "netpol-renders" "Both API and postgres NetworkPolicy render when networkPolicy.enabled=true"
+else
+    err "netpol-renders" "Expected 2 NetworkPolicy resources when enabled, found $np_count"
+fi
+
+# 16. NetworkPolicy absent when networkPolicy.enabled=false (default)
+output=$(helm template test-release "$CHART" 2>&1)
+if ! echo "$output" | grep -q '^kind: NetworkPolicy$'; then
+    ok "netpol-default-off" "NetworkPolicy absent by default (networkPolicy.enabled=false)"
+else
+    err "netpol-default-off" "NetworkPolicy unexpectedly present when networkPolicy.enabled is unset"
+fi
+
+# 17. Migration Job renders by default (migrations.enabled=true)
+output=$(helm template test-release "$CHART" 2>&1)
+if echo "$output" | grep -q '^kind: Job$' && echo "$output" | grep -q 'helm.sh/hook: pre-install,pre-upgrade'; then
+    ok "migrations-default-on" "Migration Job renders by default with pre-install,pre-upgrade hooks"
+else
+    err "migrations-default-on" "Migration Job missing or hook annotations not set"
+fi
+
+# 18. Migration Job omitted when migrations.enabled=false
+output=$(helm template test-release "$CHART" --set migrations.enabled=false 2>&1)
+if ! echo "$output" | grep -q '^kind: Job$'; then
+    ok "migrations-opt-out" "Migration Job omitted when migrations.enabled=false"
+else
+    err "migrations-opt-out" "Migration Job still present when migrations.enabled=false"
+fi
+
 echo "=================================="
 if [ "$ERRORS" -eq 0 ]; then
     echo "PASS — 0 errors, $WARNINGS warning(s)"
