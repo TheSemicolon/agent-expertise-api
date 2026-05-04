@@ -1,5 +1,6 @@
 #pragma warning disable SKEXP0070
 
+using System.Globalization;
 using ExpertiseApi.Auth;
 using ExpertiseApi.Cli;
 using ExpertiseApi.Data;
@@ -15,7 +16,7 @@ using System.Text.Json.Serialization;
 using Scalar.AspNetCore;
 
 Log.Logger = new LoggerConfiguration()
-    .WriteTo.Console()
+    .WriteTo.Console(formatProvider: CultureInfo.InvariantCulture)
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
@@ -139,13 +140,15 @@ app.MapAuditEndpoints();
 if (metricsEnabled)
     app.MapMetrics().AllowAnonymous();
 
-try { app.Run(); }
+try { await app.RunAsync(); }
+#pragma warning disable CA1031 // Top-level fatal handler — log any unhandled exception then exit. Re-throwing here would suppress the log and produce a less-useful stack trace.
 catch (Exception ex)
+#pragma warning restore CA1031
 {
     Log.Fatal(ex, "Application terminated unexpectedly");
     Environment.ExitCode = 1;
 }
-finally { Log.CloseAndFlush(); }
+finally { await Log.CloseAndFlushAsync(); }
 
 // WebApplicationFactory<Program> requires Program to be visible to the test
 // assembly via the C# type system. [InternalsVisibleTo] does not satisfy the

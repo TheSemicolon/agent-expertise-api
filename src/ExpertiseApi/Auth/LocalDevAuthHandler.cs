@@ -39,7 +39,7 @@ internal class LocalDevAuthHandler(
             return Task.FromResult(AuthenticateResult.NoResult());
 
         var body = raw[TokenPrefix.Length..];
-        var sepIndex = body.IndexOf(':');
+        var sepIndex = body.IndexOf(':', StringComparison.Ordinal);
         if (sepIndex <= 0)
         {
             Logger.LogWarning("LocalDev token rejected: malformed format (expected dev:tenant:scopes)");
