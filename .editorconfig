@@ -1,0 +1,35 @@
+# Repo-wide analyzer severity configuration. See ADR-006 for the broader
+# CA1515 cleanup; the entries here address the next two contributors to the
+# baseline that issue #101 tracks.
+#
+# Formatting rules (indent_size, charset, line_endings) are intentionally
+# omitted from this file — files in this repo are not currently consistent
+# enough for those rules to land without a separate normalization pass.
+
+root = true
+
+[*.cs]
+# CA2007: ConfigureAwait(false). The rule's rationale ("avoid deadlocks from
+# capturing the SynchronizationContext") does not apply to ASP.NET Core or
+# console apps — neither installs a SynchronizationContext, so awaited
+# continuations always run on the thread pool. Adding ConfigureAwait(false)
+# everywhere produces ~110 warnings of pure noise in this codebase. The rule
+# is the canonical example of "library code wants this, application code
+# doesn't" — and this is application code.
+dotnet_diagnostic.CA2007.severity = none
+
+# Test code: CA1861 fires on every `new[] { ... }` literal passed as a method
+# argument, suggesting it be hoisted to a static readonly field. In test
+# arrange/act blocks the array is allocated once per test invocation and
+# readability beats the micro-optimization. The rule remains active for
+# production code under src/, where genuine hot paths benefit from the fix.
+[tests/**/*.cs]
+dotnet_diagnostic.CA1861.severity = none
+
+# EF Core migration scaffolding emits MigrationBuilder calls with literal
+# `new[] {...}` arguments as its canonical syntax. We can't reshape what
+# `dotnet ef migrations add` generates without forking the EF templates, so
+# silence the rule in the Migrations folder. ADR-006 records the same pattern
+# applied to CA1515.
+[**/Migrations/*.cs]
+dotnet_diagnostic.CA1861.severity = none
