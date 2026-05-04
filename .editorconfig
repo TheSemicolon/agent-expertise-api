@@ -55,10 +55,11 @@ dotnet_diagnostic.CA1861.severity = none
 
 # CA1308: the data layer uses `.ToLowerInvariant()` for case-insensitive title
 # matching against PostgreSQL columns indexed via LOWER(). The rule's
-# preference for ToUpperInvariant() exists because some Turkish characters
-# round-trip differently through lowercase, but the data here is constrained
-# to the ASCII subset used by entry titles and the SQL index is keyed on
-# LOWER(). Forcing ToUpperInvariant would break the index match.
+# preference for ToUpperInvariant() exists because some characters can round-
+# trip differently through lowercase, but here the lowercased form is the
+# deliberate invariant normalization used by both the application and the SQL
+# index. Forcing ToUpperInvariant() would diverge from LOWER(title) and break
+# the intended index-aligned comparison behavior.
 [src/ExpertiseApi/Data/*.cs]
 dotnet_diagnostic.CA1308.severity = none
 
