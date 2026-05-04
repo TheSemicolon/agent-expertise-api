@@ -14,8 +14,41 @@ service:
 
 ingress:
   enabled: true
+  className: nginx
   hostname: expertise.example.com
   clusterIssuer: letsencrypt-prod
+
+# NetworkPolicy is opt-in (default false) to preserve current behavior.
+# When enabled the chart restricts pod-to-pod traffic so:
+#   - Only the API talks to postgres on 6432
+#   - Only pods in the prometheus namespace scrape /metrics on 8080
+#   - The ingress controller can reach the API on 8080
+networkPolicy:
+  enabled: false
+  ingressNamespaceSelector:
+    # Default targets the upstream nginx-ingress chart's namespace label.
+    # Override to match your ingress controller's actual namespace.
+    matchLabels:
+      kubernetes.io/metadata.name: ingress-nginx
+  prometheusNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: monitoring
+
+# EF Core schema migrations run automatically as a Helm pre-install + pre-upgrade
+# hook by default — without this, `helm upgrade` ships application code against
+# the prior schema and the deployment can deadlock on first request.
+#
+# Set migrations.enabled=false only if you run `dotnet ef database update`
+# manually as part of your deploy pipeline.
+migrations:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
 
 # Authentication.
 #
