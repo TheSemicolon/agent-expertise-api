@@ -12,6 +12,12 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+    ignore:
+      # FluentAssertions v8+ is governed by the Xceed Commercial license and
+      # requires a paid subscription for commercial use. This repo migrated to
+      # AwesomeAssertions (Apache 2.0 community fork). Any future Dependabot PR
+      # that tries to re-add FluentAssertions must be rejected.
+      - dependency-name: "FluentAssertions"
     groups:
       ef-core:
         patterns:
