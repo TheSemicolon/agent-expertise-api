@@ -8,8 +8,8 @@
   "$defs": {
     "k8sQuantity": {
       "type": "string",
-      "pattern": "^[+]?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+|[munpkMGTPE]i?|[munpkMGTPE]?)?$",
-      "description": "Kubernetes resource quantity (e.g. 100m, 256Mi, 1.5, 500Mi)."
+      "pattern": "^[+-]?([0-9]+(\\.[0-9]+)?|\\.[0-9]+)([eE][+-]?[0-9]+|[numkMGTPE]|[KMGTPE]i)?$",
+      "description": "Kubernetes resource quantity matching the apimachinery resource.Quantity grammar: decimal-SI suffixes (n, u, m, k, M, G, T, P, E) or binary-SI suffixes (Ki, Mi, Gi, Ti, Pi, Ei) or scientific notation. Examples: 100m, 256Mi, 1.5, 1Ki, 1e3."
     },
     "k8sResources": {
       "type": "object",
@@ -147,15 +147,17 @@
       "type": "object",
       "properties": {
         "resources": {
-          "type": "object",
           "$ref": "#/$defs/k8sResources"
         }
       }
     },
     "postgres": {
       "type": "object",
-      "required": ["image", "secretName"],
       "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "When true (default), the chart deploys an in-cluster Postgres StatefulSet (with PgBouncer sidecar). When false, the chart skips all Postgres + PgBouncer resources — the operator must supply 'ConnectionStrings__DefaultConnection' in 'auth.secretName' pointing at an external Postgres (e.g. Azure Database for PostgreSQL Flexible Server, RDS, an existing in-cluster CNPG cluster, or host-level Postgres)."
+        },
         "image": { "type": "string", "minLength": 1 },
         "storage": { "type": "string", "minLength": 1 },
         "secretName": { "type": "string", "minLength": 1 },
@@ -163,18 +165,46 @@
           "type": "string",
           "pattern": "^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/([0-9]|[1-2][0-9]|3[0-2])$"
         },
-        "resources": {
+        "external": {
           "type": "object",
+          "description": "External-Postgres parameters used by the NetworkPolicy egress rule when postgres.enabled=false. The connection string itself lives in the secret named by auth.secretName, NOT here — this block only carries the network-layer hints the chart cannot derive from the secret.",
+          "properties": {
+            "cidr": {
+              "type": "string",
+              "pattern": "^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/([0-9]|[1-2][0-9]|3[0-2])$|^([0-9a-fA-F:]+)/([0-9]|[1-9][0-9]|1[01][0-9]|12[0-8])$",
+              "description": "IPv4 or IPv6 CIDR for the external Postgres host (e.g. '10.20.0.0/16' for a managed-Postgres subnet). Used as the egress ipBlock in the API NetworkPolicy when postgres.enabled=false AND networkPolicy.enabled=true. Optional — if unset and networkPolicy.enabled=true, operators must supply their own egress rules."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "External Postgres TCP port (defaults to 5432 in the NetworkPolicy egress rule)."
+            }
+          },
+          "additionalProperties": false
+        },
+        "resources": {
           "$ref": "#/$defs/k8sResources"
         }
-      }
+      },
+      "allOf": [
+        {
+          "$comment": "When postgres.enabled is true (or omitted), the in-chart Postgres deployment requires 'image' and 'secretName'.",
+          "if": {
+            "not": {
+              "properties": { "enabled": { "const": false } },
+              "required": ["enabled"]
+            }
+          },
+          "then": { "required": ["image", "secretName"] }
+        }
+      ]
     },
     "pgbouncer": {
       "type": "object",
       "properties": {
         "image": { "type": "string", "minLength": 1 },
         "resources": {
-          "type": "object",
           "$ref": "#/$defs/k8sResources"
         }
       }
@@ -184,7 +214,6 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "resources": {
-          "type": "object",
           "$ref": "#/$defs/k8sResources"
         }
       }

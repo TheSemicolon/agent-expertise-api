@@ -28,12 +28,38 @@ them out-of-band (via SealedSecrets, External Secrets Operator, sops, etc.).
           AUTH__APIKEY                       (LocalDev/ApiKey/Hybrid only)
           Auth__Oidc__Issuers__N__GroupToTenantMapping__<group-uuid>
                                              (per OIDC issuer if not in values.yaml)
+{{- if not .Values.postgres.enabled }}
+          ConnectionStrings__DefaultConnection
+                                             (REQUIRED in external-Postgres mode — the
+                                             chart does NOT deploy an in-cluster
+                                             postgres; supply a connection string
+                                             pointing at your managed/external DB)
+{{- end }}
+{{- if .Values.postgres.enabled }}
 
   • {{ .Values.postgres.secretName | quote }}
         Used by the postgres StatefulSet and the API connection string.
         Must contain:
           POSTGRES_PASSWORD
           POSTGRES_USER       (optional — defaults to "expertise")
+{{- else }}
+
+  ✓ External-Postgres mode active (postgres.enabled=false).
+        The chart will NOT deploy a Postgres StatefulSet, Service, or
+        ConfigMap. Ensure your external Postgres is reachable from the API
+        pod, has the `vector` extension installed, and that
+        ConnectionStrings__DefaultConnection in {{ .Values.auth.secretName | quote }}
+        points at it.
+{{- if and .Values.networkPolicy.enabled (not (and .Values.postgres.external .Values.postgres.external.cidr)) }}
+
+  WARNING: networkPolicy.enabled=true AND postgres.enabled=false AND
+           postgres.external.cidr is unset. The API NetworkPolicy will
+           contain NO egress rule for Postgres traffic — the API will not
+           be able to reach your external DB. Set postgres.external.cidr
+           to your external Postgres subnet CIDR, or set
+           networkPolicy.enabled=false (loses ingress hardening too).
+{{- end }}
+{{- end }}
 
 ────────────────────────────────────────────────────────────────────────────────
 3. Production checklist
@@ -64,7 +90,11 @@ them out-of-band (via SealedSecrets, External Secrets Operator, sops, etc.).
            networks) to fix attribution. Typical value:
              forwardedHeaders:
                trustedCidr:
+{{- if .Values.postgres.enabled }}
                  - "{{ .Values.postgres.podCidr }}"   # cluster pod CIDR
+{{- else }}
+                 - "10.42.0.0/16"   # replace with your cluster pod CIDR
+{{- end }}
 {{- else }}
 
   ✓ ForwardedHeaders trusts {{ len .Values.forwardedHeaders.trustedCidr }} CIDR(s).

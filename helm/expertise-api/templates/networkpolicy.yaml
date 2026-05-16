@@ -31,7 +31,8 @@ spec:
         - port: {{ .Values.service.targetPort }}
           protocol: TCP
   egress:
-    # API → pgbouncer (sidecar in the postgres pod).
+    {{- if .Values.postgres.enabled }}
+    # API → pgbouncer (sidecar in the in-chart postgres pod).
     - to:
         - podSelector:
             matchLabels:
@@ -39,6 +40,17 @@ spec:
       ports:
         - port: 6432
           protocol: TCP
+    {{- else if and .Values.postgres.external .Values.postgres.external.cidr }}
+    # API → external Postgres (postgres.enabled=false).
+    # Operator supplied postgres.external.cidr; emit an ipBlock egress rule
+    # to the documented external port (defaults to 5432).
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.postgres.external.cidr | quote }}
+      ports:
+        - port: {{ .Values.postgres.external.port | default 5432 }}
+          protocol: TCP
+    {{- end }}
     # DNS resolution.
     - to:
         - namespaceSelector: {}
@@ -59,6 +71,7 @@ spec:
         - port: 443
           protocol: TCP
 ---
+{{- if .Values.postgres.enabled }}
 # Postgres pod accepts only API and migration-job traffic on 6432.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -88,4 +101,5 @@ spec:
       ports:
         - port: 6432
           protocol: TCP
+{{- end }}
 {{- end }}

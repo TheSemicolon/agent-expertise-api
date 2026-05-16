@@ -4,7 +4,7 @@ description: Self-hosted REST API for storing and serving expertise entries cons
 type: application
 # Chart version — bumped manually when chart structure changes (templates,
 # values shape, hooks). Independent of appVersion / released image tag.
-version: 0.1.0
+version: 0.2.0
 # Application version — kept in sync with the released container image tag by
 # `.github/workflows/release.yml` after each successful semantic-release run.
 # Manual baseline: v0.1.3 (the latest tag on `main` at chart-floor introduction).

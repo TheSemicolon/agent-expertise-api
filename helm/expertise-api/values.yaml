@@ -110,7 +110,32 @@ api:
       cpu: 500m
       memory: 512Mi
 
+# In-cluster Postgres + PgBouncer (sidecar in the postgres pod).
+#
+# Set postgres.enabled=false to skip ALL in-chart Postgres resources — the
+# StatefulSet, the service, the configmaps, and the PgBouncer sidecar. Use
+# this when running against managed Postgres (Azure Database for PostgreSQL
+# Flexible Server, RDS, Cloud SQL), an existing in-cluster CNPG cluster, or
+# host-level Postgres. The operator must then supply
+# 'ConnectionStrings__DefaultConnection' in the secret named by
+# 'auth.secretName' pointing at the external database.
+#
+# Caveat (documented in values.yaml + README): when postgres.enabled=false
+# AND networkPolicy.enabled=true, supply postgres.external.cidr so the API
+# NetworkPolicy emits the correct egress rule. Without that, either set
+# networkPolicy.enabled=false (loses ingress hardening) or provide custom
+# egress rules.
 postgres:
+  enabled: true
+  # External-Postgres parameters — only consulted when 'enabled: false'.
+  # 'cidr' becomes the API NetworkPolicy egress ipBlock when networkPolicy.enabled=true.
+  # 'port' defaults to 5432 in the rendered policy.
+  external: {}
+  # Example for external mode:
+  # enabled: false
+  # external:
+  #   cidr: "10.20.0.0/16"
+  #   port: 5432
   image: pgvector/pgvector:pg17
   storage: 1Gi
   secretName: expertise-postgres

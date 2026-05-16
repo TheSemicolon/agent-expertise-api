@@ -94,6 +94,42 @@ helm upgrade --install expertise-api ./helm/expertise-api \
   --create-namespace
 ```
 
+### External Postgres (managed or pre-existing)
+
+Set `postgres.enabled: false` to skip the in-chart Postgres StatefulSet and PgBouncer sidecar. Use this with Azure Database for PostgreSQL Flexible Server, RDS, Cloud SQL, or any existing Postgres reachable from the cluster.
+
+When disabled, the operator must supply `ConnectionStrings__DefaultConnection` (and a writeable database with the `vector` extension installed) in the secret named by `auth.secretName`:
+
+```yaml
+# my-values.yaml
+postgres:
+  enabled: false
+  external:
+    # Optional but RECOMMENDED when networkPolicy.enabled=true: CIDR of the
+    # external Postgres host(s) so the API NetworkPolicy emits an explicit
+    # ipBlock egress rule. Without this, you must either disable the
+    # NetworkPolicy entirely or supply custom egress rules.
+    cidr: "10.20.0.0/16"
+    port: 5432   # optional, defaults to 5432
+networkPolicy:
+  # Safe to leave enabled when postgres.external.cidr is set above.
+  enabled: true
+auth:
+  mode: Oidc
+  secretName: expertise-api-app   # must contain ConnectionStrings__DefaultConnection
+  oidc:
+    issuers:
+      - name: Entra
+        issuer: "https://login.microsoftonline.com/{tenant-id}/v2.0"
+        audience: "{api-client-id}"
+```
+
+Azure Database for PostgreSQL Flexible Server connection-string shape (in the Secret pointed to by `auth.secretName`):
+
+```text
+ConnectionStrings__DefaultConnection=Host={server}.postgres.database.azure.com;Port=5432;Database=expertise;Username={user};Password={password};SSL Mode=Require;Trust Server Certificate=true
+```
+
 Docker images are published to GHCR when a release is cut from `main`:
 
 ```text
