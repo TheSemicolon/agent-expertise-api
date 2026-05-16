@@ -46,16 +46,16 @@ jobs:
       # infra repo (agent-expertise-api-infra) sets image.tag explicitly via
       # the dispatch payload at deploy time, so appVersion is cosmetic for
       # runtime correctness; the sync exists for `helm list` clarity.
-      - name: Sync Chart.yaml appVersion
+      - name: Sync Chart.yaml version + appVersion
         if: steps.semantic.outputs.new_release_published == 'true'
         env:
           NEW_VERSION: ${{ steps.semantic.outputs.new_release_version }}
         run: |
-          yq -i '.appVersion = strenv(NEW_VERSION)' helm/expertise-api/Chart.yaml
+          yq -i '.version = strenv(NEW_VERSION) | .appVersion = strenv(NEW_VERSION)' helm/expertise-api/Chart.yaml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add helm/expertise-api/Chart.yaml
-          git commit -m "chore(helm): sync appVersion to ${NEW_VERSION} [skip ci]"
+          git commit -m "chore(helm): sync chart version + appVersion to ${NEW_VERSION} [skip ci]"
           git push
 
   build-and-push:
@@ -66,7 +66,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read    # checkout
-      packages: write   # push to GHCR
+      packages: write   # push to GHCR (image + chart OCI artifact)
+      id-token: write   # cosign keyless OIDC signing (Sigstore Fulcio)
 
     steps:
       - name: Checkout
@@ -109,6 +110,7 @@ jobs:
             type=raw,value=latest
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
@@ -118,6 +120,95 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # ---- Supply-chain signing (cosign keyless OIDC) -----------------------
+      # Both the image and the Helm chart OCI artifact are signed by the
+      # workflow's GitHub Actions OIDC token via Sigstore Fulcio. No
+      # long-lived keys to manage; signatures land as adjacent OCI
+      # artifacts (.sig) in GHCR. Verification recipe in README.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      - name: Sign Docker image by digest (keyless)
+        env:
+          IMAGES: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        # Sign by digest — NOT by tag. Tags are mutable; digests are not.
+        # COSIGN_EXPERIMENTAL=1 is no longer required on cosign v2; left
+        # unset deliberately.
+        run: |
+          set -euo pipefail
+          # All tags point at the same digest after a single buildx push;
+          # extract the repository name (everything before the first :) from
+          # the first tag and sign once at the digest.
+          repo=$(printf '%s\n' "$IMAGES" | head -n1 | cut -d: -f1)
+          cosign sign --yes "${repo}@${DIGEST}"
+
+      # ---- Helm chart OCI publish + signing ---------------------------------
+      # Publish the chart as an OCI artifact alongside the image, then sign
+      # it with the same keyless OIDC identity. Consumers can install via
+      # `helm install foo oci://ghcr.io/thesemicolon/charts/expertise-api`.
+      - name: Install Helm
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.18.3
+
+      - name: Sync chart version + appVersion to release version
+        env:
+          NEW_VERSION: ${{ needs.release.outputs.new-release-version }}
+        # The release job pushed an appVersion update commit to main, but
+        # this job's checkout happened before that push and so still sees
+        # the prior Chart.yaml. Apply the same version (and align chart
+        # version with app version) here so the packaged tarball matches
+        # the released image.
+        run: |
+          set -euo pipefail
+          yq -i '.version = strenv(NEW_VERSION) | .appVersion = strenv(NEW_VERSION)' helm/expertise-api/Chart.yaml
+
+      - name: Resolve lowercase owner for OCI paths
+        id: owner
+        # GHCR (and the OCI distribution spec) require all path components to
+        # be lowercase. ${{ github.repository_owner }} preserves the canonical
+        # GitHub case (e.g. "TheSemicolon"). docker/metadata-action auto-
+        # lowercases the image path, but helm push + cosign sign use raw
+        # string interpolation and would otherwise fail with
+        # "name unknown: repository name must be lowercase".
+        run: |
+          set -euo pipefail
+          lc=$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          printf 'lc=%s\n' "$lc" >> "$GITHUB_OUTPUT"
+
+      - name: Helm registry login (GHCR)
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Package + push Helm chart to GHCR OCI
+        id: helm-push
+        env:
+          NEW_VERSION: ${{ needs.release.outputs.new-release-version }}
+          OWNER_LC: ${{ steps.owner.outputs.lc }}
+        run: |
+          set -euo pipefail
+          helm package helm/expertise-api --destination dist/
+          # `helm push` prints `Pushed:` and `Digest: sha256:...` to stdout
+          # (cmd/helm/push.go uses cmd.OutOrStdout()); capture both with 2>&1
+          # so the runner log still shows them and the substitution captures
+          # the digest. Sign by digest (immutable), not by tag.
+          chart_tgz="dist/expertise-api-${NEW_VERSION}.tgz"
+          push_out=$(helm push "$chart_tgz" "oci://ghcr.io/${OWNER_LC}/charts" 2>&1 | tee push.log)
+          chart_digest=$(printf '%s\n' "$push_out" | awk '/^Digest: /{print $2}')
+          [ -n "$chart_digest" ] || { echo "failed to parse chart digest from helm push output" >&2; exit 1; }
+          printf 'digest=%s\n' "$chart_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Sign Helm chart artifact (keyless)
+        env:
+          CHART_DIGEST: ${{ steps.helm-push.outputs.digest }}
+          OWNER_LC: ${{ steps.owner.outputs.lc }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "ghcr.io/${OWNER_LC}/charts/expertise-api@${CHART_DIGEST}"
 
       - name: Dispatch deploy to infra repo
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1

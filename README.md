@@ -102,6 +102,35 @@ ghcr.io/thesemicolon/agent-expertise-api:v1.2.3          # immutable SemVer tag
 ghcr.io/thesemicolon/agent-expertise-api:1.2             # tracks the latest 1.2.x
 ```
 
+The Helm chart is also published as an OCI artifact on every release:
+
+```bash
+helm install expertise-api oci://ghcr.io/thesemicolon/charts/expertise-api \
+  --version X.Y.Z \
+  --namespace expertise-api --create-namespace \
+  -f my-values.yaml
+```
+
+The chart version equals the application version (e.g. `0.4.2` chart serves the `v0.4.2` image by default).
+
+### Supply-chain verification (cosign keyless OIDC)
+
+Both the image and the chart artifact are signed via Sigstore keyless OIDC (the workflow's GitHub Actions OIDC token, no long-lived keys). Verify before installing:
+
+```bash
+# Verify image
+cosign verify ghcr.io/thesemicolon/agent-expertise-api:vX.Y.Z \
+  --certificate-identity-regexp 'https://github\.com/TheSemicolon/agent-expertise-api/\.github/workflows/release\.yml@refs/heads/main' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+# Verify chart artifact
+cosign verify ghcr.io/thesemicolon/charts/expertise-api:X.Y.Z \
+  --certificate-identity-regexp 'https://github\.com/TheSemicolon/agent-expertise-api/\.github/workflows/release\.yml@refs/heads/main' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+A missing or invalid signature exits non-zero — wire it into your deploy pipeline as a hard gate.
+
 ### Archetype A2: native OS service install (no Docker)
 
 For a single developer who wants the API always-on without the Docker
