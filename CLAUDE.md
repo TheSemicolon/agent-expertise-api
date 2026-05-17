@@ -22,9 +22,10 @@ Self-hosted .NET 10 REST API for storing and serving expertise entries consumed 
 
 ```bash
 # .NET 10 SDK (verify with: dotnet --version)
+# The repo pins the SDK band via global.json (10.0.1xx, latestFeature rollforward).
 # Docker + Docker Compose
-# EF Core CLI tool
-dotnet tool install --global dotnet-ef
+# EF Core CLI tool is pinned in .config/dotnet-tools.json — install via:
+dotnet tool restore
 ```
 
 ## Build & Run Commands

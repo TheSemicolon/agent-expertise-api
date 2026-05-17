@@ -64,19 +64,22 @@ cp deploy/local/.env.example deploy/local/.env
 # Edit deploy/local/.env — set POSTGRES_PASSWORD and AUTH__APIKEY
 docker compose -f deploy/local/docker-compose.yml up -d postgres pgbouncer
 
-# 2. Apply migrations
+# 2. Restore the EF Core CLI tool (pinned in .config/dotnet-tools.json)
+dotnet tool restore
+
+# 3. Apply migrations
 dotnet ef database update --project src/ExpertiseApi
 
-# 2b. Download ONNX model files (required for embeddings and semantic search)
+# 3b. Download ONNX model files (required for embeddings and semantic search)
 ./scripts/download-models.sh
 
-# 3. Run the API
+# 4. Run the API
 dotnet run --project src/ExpertiseApi
 
-# 4. Verify
+# 5. Verify
 curl http://localhost:5000/health
 
-# 5. Browse the query page (interactive UI for search and filtering)
+# 6. Browse the query page (interactive UI for search and filtering)
 # http://localhost:5000/query
 ```
 

@@ -4,11 +4,23 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-# Copy project file first for layer caching of the restore step
+# Copy SDK pin + tool manifest first so the restore + tool-restore layers cache
+# against changes to those files only, not against source-tree churn. global.json
+# selects the SDK; .config/dotnet-tools.json pins dotnet-ef (used in the bundle
+# stage). Then copy the csproj to cache `dotnet restore` against package-graph
+# changes; finally copy the rest of the source.
+COPY global.json ./
+COPY .config/ .config/
 COPY src/ExpertiseApi/ExpertiseApi.csproj src/ExpertiseApi/
 
 RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
     dotnet restore src/ExpertiseApi/ExpertiseApi.csproj
+
+# Restore the EF Core CLI tool before copying source so the tool layer caches
+# against .config/dotnet-tools.json changes only, not against source churn.
+RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
+    dotnet tool restore
+ENV PATH="$PATH:/root/.dotnet/tools"
 
 # Copy the rest of the source and publish
 COPY src/ src/
@@ -21,10 +33,8 @@ RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
 
 # ── Migration bundle stage ─────────────────────────────────────────────────────
 FROM build AS bundle
-RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
-    dotnet tool install --global dotnet-ef --version 10.0.*
-ENV PATH="$PATH:/root/.dotnet/tools"
-
+# dotnet-ef is restored in the build stage above (cached against the tool
+# manifest, not against source churn). Just invoke the migration-bundle build.
 RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
     dotnet ef migrations bundle \
     --project src/ExpertiseApi/ExpertiseApi.csproj \
