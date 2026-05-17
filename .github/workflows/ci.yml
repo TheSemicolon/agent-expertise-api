@@ -80,3 +80,23 @@ jobs:
           name: test-results
           path: test-results/*.trx
           retention-days: 14
+
+  helm-lint:
+    name: Helm lint + render tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Helm
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.18.3
+
+      - name: Helm lint (strict)
+        run: helm lint --strict helm/expertise-api
+
+      - name: Helm render tests
+        run: bash helm/expertise-api/tests/test-render.sh
