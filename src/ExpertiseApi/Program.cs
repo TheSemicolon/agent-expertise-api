@@ -70,7 +70,10 @@ builder.Services.AddDbContext<ExpertiseDbContext>(options =>
 //   - AddDbContextCheck: pings the configured Npgsql connection. Cheaper than
 //     AddNpgSql and avoids an extra DI service registration; failure mode is
 //     ~connection-timeout-bounded (Npgsql default 15s, suitable for readiness).
-//   - OnnxModelHealthCheck: model/vocab file presence + DI resolution.
+//   - OnnxModelHealthCheck: DI resolvability of IEmbeddingGenerator (proxy for
+//     "model/vocab files were present at startup"; the SemanticKernel
+//     registration is conditional on File.Exists and loads the model eagerly,
+//     so DI resolution is the meaningful observable at probe time).
 //   - PendingMigrationHealthCheck: HealthStatus.Degraded when EF Core reports
 //     unapplied migrations. The framework default maps Degraded → 200 OK; the
 //     readyOptions registration in HealthEndpoints.cs explicitly overrides

@@ -75,25 +75,33 @@ public class HealthEndpointTests
         // PendingMigrationHealthCheck returns HealthStatus.Degraded for that
         // state, and the ASP.NET Core framework default maps Degraded → 200,
         // so HealthEndpoints.MapHealthEndpoints overrides ResultStatusCodes
-        // to surface Degraded as 503. This test registers an additional
-        // always-Degraded health check (tagged "ready") to exercise the
-        // Degraded → 503 path independently of the real migration check,
-        // which requires a reachable DB with a populated migration table.
+        // to surface Degraded as 503. This test isolates the Degraded → 503
+        // routing by:
+        //   (1) clearing the production health-check registrations (db, onnx,
+        //       migrations) so they cannot mask the assertion — the unit-test
+        //       env has no reachable DB, which would otherwise make the
+        //       AddDbContextCheck return Unhealthy and 503 regardless of the
+        //       ResultStatusCodes override, leaving the override untested.
+        //   (2) registering a single AlwaysDegradedCheck tagged "ready" so the
+        //       aggregate HealthReport.Status is exactly Degraded.
         //
-        // Without the ResultStatusCodes override in HealthEndpoints.cs this
-        // test asserts 200 instead of 503; that is the regression guard.
-        using var factory = new ApiFactory("Host=127.0.0.1;Port=5432;Database=stub;Username=stub;Password=stub")
-            .WithWebHostBuilder(builder =>
+        // With the ResultStatusCodes override in place, the response is 503.
+        // Without it, the framework default maps Degraded → 200 and this test
+        // fails — that is the regression guard.
+        using var outerFactory = new ApiFactory("Host=127.0.0.1;Port=5432;Database=stub;Username=stub;Password=stub");
+        using var factory = outerFactory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
             {
-                builder.ConfigureServices(services =>
-                {
-                    services.AddHealthChecks().AddCheck(
-                        "always-degraded-stub",
-                        new AlwaysDegradedCheck(),
-                        failureStatus: HealthStatus.Degraded,
-                        tags: ["ready"]);
-                });
+                services.Configure<HealthCheckServiceOptions>(options =>
+                    options.Registrations.Clear());
+                services.AddHealthChecks().AddCheck(
+                    "always-degraded-stub",
+                    new AlwaysDegradedCheck(),
+                    failureStatus: HealthStatus.Degraded,
+                    tags: ["ready"]);
             });
+        });
 
         using var client = factory.CreateClient();
         var response = await client.GetAsync(new Uri("/health/ready", UriKind.Relative));
