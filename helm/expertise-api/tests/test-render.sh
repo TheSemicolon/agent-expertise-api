@@ -212,6 +212,173 @@ else
     err "schema-replicacount-min" "values.schema.json did not reject replicaCount=0"
 fi
 
+# 24. values.schema.json: rejects bogus Kubernetes quantity in api.resources.requests.cpu
+schema_out=$(helm template test-release "$CHART" --set api.resources.requests.cpu=bogus 2>&1 || true)
+if echo "$schema_out" | grep -q 'api/resources/requests/cpu'; then
+    ok "schema-resources-cpu-pattern" "values.schema.json rejects non-quantity cpu (bogus)"
+else
+    err "schema-resources-cpu-pattern" "values.schema.json did not reject api.resources.requests.cpu=bogus"
+fi
+
+# 25. values.schema.json: accepts valid Kubernetes quantity for api.resources.requests.cpu
+schema_out=$(helm template test-release "$CHART" --set api.resources.requests.cpu=250m 2>&1 || true)
+if echo "$schema_out" | grep -qE 'api/resources/requests/cpu|pattern'; then
+    err "schema-resources-cpu-accept" "values.schema.json incorrectly rejected api.resources.requests.cpu=250m"
+else
+    ok "schema-resources-cpu-accept" "values.schema.json accepts api.resources.requests.cpu=250m"
+fi
+
+# 26. values.schema.json: rejects bogus memory quantity
+schema_out=$(helm template test-release "$CHART" --set postgres.resources.limits.memory=notamemorystring 2>&1 || true)
+if echo "$schema_out" | grep -q 'postgres/resources/limits/memory'; then
+    ok "schema-resources-memory-pattern" "values.schema.json rejects non-quantity memory"
+else
+    err "schema-resources-memory-pattern" "values.schema.json did not reject postgres.resources.limits.memory=notamemorystring"
+fi
+
+# 27. values.schema.json: rejects unknown resource field (additionalProperties:false)
+schema_out=$(helm template test-release "$CHART" --set api.resources.requests.gpu=1 2>&1 || true)
+if echo "$schema_out" | grep -qE 'api/resources/requests|additionalProperties|unevaluatedProperties'; then
+    ok "schema-resources-no-extras" "values.schema.json rejects unknown resource field (gpu)"
+else
+    err "schema-resources-no-extras" "values.schema.json did not reject api.resources.requests.gpu=1"
+fi
+
+# 28. values.schema.json: accepts memory quantity with binary suffix (Mi/Gi)
+schema_out=$(helm template test-release "$CHART" --set api.resources.requests.memory=256Mi 2>&1 || true)
+if echo "$schema_out" | grep -qE 'api/resources/requests/memory|pattern'; then
+    err "schema-memory-binary-suffix" "values.schema.json incorrectly rejected memory=256Mi"
+else
+    ok "schema-memory-binary-suffix" "values.schema.json accepts memory=256Mi"
+fi
+
+# 28b. values.schema.json: accepts uppercase binary kibi suffix (1Ki)
+schema_out=$(helm template test-release "$CHART" --set api.resources.requests.memory=1Ki 2>&1 || true)
+if echo "$schema_out" | grep -qE 'api/resources/requests/memory|pattern'; then
+    err "schema-memory-Ki-accept" "values.schema.json incorrectly rejected memory=1Ki"
+else
+    ok "schema-memory-Ki-accept" "values.schema.json accepts memory=1Ki (uppercase canonical binary kibi)"
+fi
+
+# 28c. values.schema.json: rejects lowercase binary suffix (100mi is NOT a K8s quantity)
+schema_out=$(helm template test-release "$CHART" --set api.resources.requests.memory=100mi 2>&1 || true)
+if echo "$schema_out" | grep -q 'api/resources/requests/memory'; then
+    ok "schema-memory-mi-reject" "values.schema.json rejects memory=100mi (lowercase binary suffix invalid per K8s grammar)"
+else
+    err "schema-memory-mi-reject" "values.schema.json did not reject memory=100mi"
+fi
+
+# 28d. values.schema.json: accepts scientific notation (1e3)
+schema_out=$(helm template test-release "$CHART" --set api.resources.requests.cpu=1e3 2>&1 || true)
+if echo "$schema_out" | grep -qE 'api/resources/requests/cpu|pattern'; then
+    err "schema-cpu-sci-accept" "values.schema.json incorrectly rejected cpu=1e3"
+else
+    ok "schema-cpu-sci-accept" "values.schema.json accepts cpu=1e3 (scientific notation)"
+fi
+
+# 28e. values.schema.json: rejects bogus suffix (KB is not a K8s quantity)
+schema_out=$(helm template test-release "$CHART" --set api.resources.requests.memory=1KB 2>&1 || true)
+if echo "$schema_out" | grep -q 'api/resources/requests/memory'; then
+    ok "schema-memory-KB-reject" "values.schema.json rejects memory=1KB (KB is not a K8s quantity suffix)"
+else
+    err "schema-memory-KB-reject" "values.schema.json did not reject memory=1KB"
+fi
+
+# 29. postgres.enabled=true (default): in-chart Postgres StatefulSet renders
+output=$(helm template test-release "$CHART" 2>&1)
+if echo "$output" | grep -qE 'kind: StatefulSet'; then
+    ok "postgres-in-chart-default" "in-chart Postgres StatefulSet renders by default"
+else
+    err "postgres-in-chart-default" "in-chart Postgres StatefulSet missing from default render"
+fi
+if echo "$output" | grep -qE 'name: test-release-postgres'; then
+    ok "postgres-in-chart-svc" "in-chart Postgres Service renders by default"
+else
+    err "postgres-in-chart-svc" "in-chart Postgres Service missing from default render"
+fi
+
+# 30. postgres.enabled=false: in-chart Postgres + PgBouncer resources skipped
+output=$(helm template test-release "$CHART" --set postgres.enabled=false --set networkPolicy.enabled=false 2>&1)
+if echo "$output" | grep -qE 'kind: StatefulSet'; then
+    err "postgres-external-no-sts" "StatefulSet rendered with postgres.enabled=false"
+else
+    ok "postgres-external-no-sts" "StatefulSet skipped when postgres.enabled=false"
+fi
+if echo "$output" | grep -qE 'name: test-release-postgres$'; then
+    err "postgres-external-no-svc" "postgres Service rendered with postgres.enabled=false"
+else
+    ok "postgres-external-no-svc" "postgres Service skipped when postgres.enabled=false"
+fi
+if echo "$output" | grep -qE 'name: test-release-pgbouncer$'; then
+    err "postgres-external-no-pgb-cm" "pgbouncer ConfigMap rendered with postgres.enabled=false"
+else
+    ok "postgres-external-no-pgb-cm" "pgbouncer ConfigMap skipped when postgres.enabled=false"
+fi
+# Deployment must still render (the API itself is unaffected by external-postgres mode)
+if echo "$output" | grep -qE 'kind: Deployment'; then
+    ok "postgres-external-api-still" "API Deployment still renders with postgres.enabled=false"
+else
+    err "postgres-external-api-still" "API Deployment missing with postgres.enabled=false"
+fi
+
+# 31. postgres.enabled=false: schema allows postgres without image/secretName
+schema_out=$(helm template test-release "$CHART" --set postgres.enabled=false --set postgres.image=null --set postgres.secretName=null --set networkPolicy.enabled=false 2>&1 || true)
+if echo "$schema_out" | grep -qE 'postgres.*missing property'; then
+    err "postgres-external-relax-required" "schema incorrectly required postgres.image/secretName when enabled=false"
+else
+    ok "postgres-external-relax-required" "schema relaxes postgres.image/secretName when enabled=false"
+fi
+
+# 32. postgres.enabled=true (default): schema still requires postgres.image
+schema_out=$(helm template test-release "$CHART" --set postgres.image=null 2>&1 || true)
+if echo "$schema_out" | grep -q "missing property 'image'"; then
+    ok "postgres-default-still-requires" "schema still requires postgres.image when enabled=true"
+else
+    err "postgres-default-still-requires" "schema did not require postgres.image when enabled=true"
+fi
+
+# 33. NetworkPolicy: -postgres policy skipped when postgres.enabled=false
+output=$(helm template test-release "$CHART" --set postgres.enabled=false --set networkPolicy.enabled=true --set 'postgres.external.cidr=10.20.0.0/16' 2>&1)
+if echo "$output" | grep -qE 'name: test-release-postgres$'; then
+    err "netpol-postgres-skipped" "-postgres NetworkPolicy rendered with postgres.enabled=false"
+else
+    ok "netpol-postgres-skipped" "-postgres NetworkPolicy skipped when postgres.enabled=false"
+fi
+
+# 34. NetworkPolicy egress: external mode emits ipBlock egress to postgres.external.cidr
+if echo "$output" | grep -q '10.20.0.0/16'; then
+    ok "netpol-external-egress" "API NetworkPolicy egress includes postgres.external.cidr ipBlock"
+else
+    err "netpol-external-egress" "API NetworkPolicy egress missing postgres.external.cidr ipBlock"
+fi
+
+# 35. NetworkPolicy egress: in-chart mode emits podSelector egress (not ipBlock)
+output=$(helm template test-release "$CHART" --set networkPolicy.enabled=true 2>&1)
+if echo "$output" | grep -q 'port: 6432'; then
+    ok "netpol-inchart-egress" "API NetworkPolicy egress targets pgbouncer port 6432 in in-chart mode"
+else
+    err "netpol-inchart-egress" "API NetworkPolicy egress missing port 6432 in in-chart mode"
+fi
+
+# 36. external.cidr schema: rejects bogus CIDR
+schema_out=$(helm template test-release "$CHART" --set postgres.enabled=false --set 'postgres.external.cidr=notacidr' 2>&1 || true)
+if echo "$schema_out" | grep -q 'postgres/external/cidr'; then
+    ok "schema-external-cidr-pattern" "schema rejects bogus postgres.external.cidr"
+else
+    err "schema-external-cidr-pattern" "schema did not reject postgres.external.cidr=notacidr"
+fi
+
+# 37. NetworkPolicy egress: external mode without external.cidr renders cleanly (no nil-deref)
+# Regression test for round-2 finding: 'else if .Values.postgres.external.cidr' nil-derefs
+# when external is unset. Combined postgres.enabled=false + networkPolicy.enabled=true +
+# postgres.external unset must render (with no postgres egress rule — operator must add their own).
+output=$(helm template test-release "$CHART" --set postgres.enabled=false --set networkPolicy.enabled=true 2>&1)
+if echo "$output" | grep -qE '^Error:'; then
+    err "netpol-external-nil-deref" "NetworkPolicy template nil-derefs when external is unset: $(echo "$output" | grep Error: | head -1)"
+else
+    ok "netpol-external-nil-deref" "NetworkPolicy renders cleanly when external is unset (no nil-deref)"
+fi
+
 echo "=================================="
 if [ "$ERRORS" -eq 0 ]; then
     echo "PASS — 0 errors, $WARNINGS warning(s)"
