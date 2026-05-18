@@ -1,9 +1,11 @@
 #pragma warning disable SKEXP0070
 
+using System.Diagnostics;
 using System.Globalization;
 using ExpertiseApi.Auth;
 using ExpertiseApi.Cli;
 using ExpertiseApi.Data;
+using ExpertiseApi.Diagnostics;
 using ExpertiseApi.Endpoints;
 using ExpertiseApi.Services;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -54,7 +56,34 @@ builder.Services.Configure<HostOptions>(options =>
 });
 
 builder.Services.AddOpenApi();
-builder.Services.AddProblemDetails();
+
+// ProblemDetails sanitization (Part D C4). Always emit a traceId extension so
+// client-side error reports can be cross-referenced to server logs; outside
+// Development, scrub Detail/Instance to prevent exception-message / connection-
+// string / stack-frame leakage in 5xx responses (LLM02). See Part D C4 in
+// docs/security/integration-threat-model.md and ADR / threat-model rationale.
+builder.Services.AddProblemDetails(options =>
+{
+    options.CustomizeProblemDetails = ctx =>
+    {
+        var traceId = Activity.Current?.TraceId.ToString() ?? ctx.HttpContext.TraceIdentifier;
+        ctx.ProblemDetails.Extensions["traceId"] = traceId;
+        ctx.ProblemDetails.Instance ??= ctx.HttpContext.Request.Path.Value;
+
+        var env = ctx.HttpContext.RequestServices.GetRequiredService<IHostEnvironment>();
+        if (!env.IsDevelopment())
+        {
+            ctx.ProblemDetails.Detail = null;
+            ctx.ProblemDetails.Instance = null;
+            ctx.ProblemDetails.Extensions.Remove("exception");
+        }
+    };
+});
+
+// Typed IExceptionHandler (.NET 8+ preferred shape). Logs full exception
+// server-side; returns false so the default IProblemDetailsService writer
+// produces the response body (and the customizer above fires).
+builder.Services.AddExceptionHandler<UnhandledExceptionLogger>();
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
