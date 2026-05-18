@@ -67,7 +67,9 @@ The live OpenAPI document is served from `/openapi/v1.json` in **all** environme
 curl https://<host>/openapi/v1.json | jq '.info, .paths | keys'
 ```
 
-The document advertises the JWT Bearer security scheme (`components.securitySchemes.Bearer`, `bearerFormat: JWT`) and a document-level `security` requirement. Operations that allow anonymous access (`/health/*`, `/openapi/*`) are excluded from the security requirement by ApiExplorer.
+The document advertises the JWT Bearer security scheme (`components.securitySchemes.Bearer`, `bearerFormat: JWT`) and a document-level `security` requirement. The endpoints currently exposed anonymously (`/openapi/v1.json`, `/health/*`, `/metrics`) are absent from the document entirely because `MapOpenApi`, `MapHealthChecks`, and the prometheus-net middleware do not register ApiExplorer descriptors. The transformer also iterates `context.DescriptionGroups` and emits an empty `security: []` on any operation that carries `IAllowAnonymous` metadata, so future `MapGet(...).AllowAnonymous()` routes will be correctly reported as anonymous in the spec.
+
+Responses are cached for 5 minutes via `OutputCache` (policy `openapi-discovery`, vary-by-host) so anonymous spec-fetch loops cannot drive sustained CPU through repeated schema generation.
 
 A version-pinned copy is also attached as a release asset (`openapi.json` + `openapi.json.sha256`) on every GitHub Release for offline consumers and codegen pipelines that need byte-stable input. See the [release page](https://github.com/TheSemicolon/agent-expertise-api/releases) and Part D C8 in `docs/security/integration-threat-model.md`. The interactive Scalar UI remains gated to Development (`/scalar/v1`) because the in-browser bearer-token storage pattern carries the same XSS exposure as `/query` (issue #124).
 

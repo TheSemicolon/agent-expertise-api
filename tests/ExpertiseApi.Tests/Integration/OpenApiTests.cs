@@ -83,17 +83,15 @@ public class OpenApiTests : IAsyncLifetime
 
         // Spot-check three representative endpoints across the route groups; full
         // matrix coverage would just shadow the per-endpoint .Produces decorations
-        // we can read directly in source.
+        // we can read directly in source. Summary checks are non-empty rather than
+        // substring-match so harmless copy-edits don't break the suite.
         AssertOperation(paths, "/expertise", "get",
-            expectedSummaryContains: "List approved expertise entries",
             expectedStatuses: ["200", "401", "403", "429"]);
 
         AssertOperation(paths, "/expertise", "post",
-            expectedSummaryContains: "Create a new expertise entry",
             expectedStatuses: ["201", "400", "401", "403", "409", "429"]);
 
         AssertOperation(paths, "/expertise/search/semantic", "get",
-            expectedSummaryContains: "Vector similarity search",
             expectedStatuses: ["200", "400", "401", "403", "429"]);
     }
 
@@ -101,13 +99,13 @@ public class OpenApiTests : IAsyncLifetime
         JsonElement paths,
         string path,
         string verb,
-        string expectedSummaryContains,
         string[] expectedStatuses)
     {
         paths.TryGetProperty(path, out var pathItem).Should().BeTrue($"path {path} should be documented");
         pathItem.TryGetProperty(verb, out var operation).Should().BeTrue($"{verb.ToUpperInvariant()} {path} should be documented");
 
-        operation.GetProperty("summary").GetString().Should().Contain(expectedSummaryContains);
+        operation.GetProperty("summary").GetString().Should().NotBeNullOrWhiteSpace(
+            $"{verb.ToUpperInvariant()} {path} should carry a non-empty summary");
 
         var responses = operation.GetProperty("responses");
         foreach (var status in expectedStatuses)
