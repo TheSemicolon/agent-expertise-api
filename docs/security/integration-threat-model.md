@@ -134,7 +134,7 @@ The four patterns evaluated as MCP alternatives. Each is described by what the L
 | M15 | TBD | TBD | TBD | TBD |
 | M16 | TBD | TBD | TBD | TBD |
 
-**Pattern-equivalence claim — pending C7 scope decision.** Whether patterns 1 and 2 are equivalent on M5/M10 depends on the [C7 scope decision below](#open-decisions). The matrix cannot be finalized until that decision is recorded.
+**Pattern-equivalence claim.** Under [C7 = Option B](#d1--c7-response-hygiene-scope-locked-option-b) (recorded), patterns 1 and 2 are equivalent on M5 / M10 / LLM01 for read-only operations. Pattern 1's pre-redaction via the `tool_result` middleware becomes defense-in-depth rather than load-bearing. The Part C cells reflect this when the citation-pass fills the matrix.
 
 ---
 
@@ -150,7 +150,7 @@ The four alternative patterns mitigate or sidestep many MCP threats but presume 
 | **C4** | **Sanitized `ProblemDetails`** — strip `Detail` / `Instance` in non-Development; log full detail server-side with correlation ID. | All patterns | #167 (gates #146) | ⚠️ Partial — `AddProblemDetails()` called but not customized |
 | **C5** | **Rate limiting** — per-principal policies on read / write / semantic-search endpoints; health endpoints exempt. | All patterns; amplifies for (1), (2) | #167 (gates #146) | ❌ Not implemented |
 | **C6** | **Agent-vs-human audit tag** — `actor_class` column on audit rows; `X-Actor-Class` header contract; default `human`. | (1), (2) | #168 (gates #147) | ❌ Not implemented |
-| **C7** | **Response hygiene** — see [Open decisions](#open-decisions) for scope (Option A PII-only vs Option B PII + injection-neutralization). | (2), (3), (4); defense-in-depth for (1) | #168 (gates #147) | ❌ Not implemented; **scope decision pending** |
+| **C7** | **Response hygiene — Option B (PII + injection-neutralization).** Strip PII (emails, phone numbers, embedded credentials, AWS access keys, GitHub tokens) AND delimiter-wrap free-text fields (`<expertise_content>…</expertise_content>`), apply instruction-stripping heuristics (`\bignore previous\b`, role-impersonation patterns), tag content-class in the JSON response. Decision recorded [D1](#d1--c7-response-hygiene-scope-locked-option-b). | (2), (3), (4); defense-in-depth for (1) | #168 (gates #147) | ❌ Not implemented; scope locked Option B |
 | **C8** | **Pinned artifacts** — `openapi.json.sha256` attached to GitHub Releases; skill / extension fetch contracts verify hashes. | (1), (2), (3) | #167 (gates #146) | ❌ Not implemented |
 
 **Implementation progress: 0/8 controls fully implemented; 2/8 partial.**
@@ -174,16 +174,15 @@ These notes will be re-verified against the spec on every minor revision per the
 
 ## Open decisions
 
-### D1 — C7 (response hygiene) scope: Option A vs Option B
+### D1 — C7 (response hygiene) scope: locked Option B
 
-**Decision needed before #168 implementation can proceed.** This decision determines whether pattern 2 (skill+curl, #147) is *equivalent* to pattern 1 (in-tree pi extension, #148) on M5 / M10 / LLM01 for read-only operations, or whether pattern 1's pre-redaction capability is genuinely load-bearing.
+**Status:** Recorded 2026-05-18 via PR #169 review sign-off.
 
-| Option | Scope | Implementation cost | Effect on pattern equivalence |
-|---|---|---|---|
-| **A — PII-only** | Strip emails, phone numbers, embedded credentials, AWS access keys, GitHub tokens from response bodies. Standard PII-detection patterns. | Low (~50 LOC + tested detector library) | Patterns 1 and 2 equivalent on LLM02. **Pattern 1's pre-redaction remains load-bearing on LLM01** (prompt-injection via stored free-text expertise content). |
-| **B — PII + injection-neutralization** *(recommended)* | Option A **plus** delimiter-wrapping of free-text fields (`<expertise_content>…</expertise_content>`), instruction-stripping heuristics (`\bignore previous\b`, role-impersonation patterns), and content-class tagging in the JSON response. | Moderate (~200 LOC + heuristic test corpus) | Patterns 1 and 2 equivalent on **both LLM01 and LLM02** for read-only ops. Pattern 1's pre-redaction becomes defense-in-depth rather than load-bearing. Closes the [path-dependence trap](#d2--path-dependence-trap-skill-pattern-becomes-default) noted below. |
+**Decision.** C7 implementation under #168 is **Option B — PII + injection-neutralization**: strip PII (emails, phone numbers, embedded credentials, AWS access keys, GitHub tokens) AND delimiter-wrap free-text fields (`<expertise_content>…</expertise_content>`), apply instruction-stripping heuristics (`\bignore previous\b`, role-impersonation patterns), and tag content-class in the JSON response. Implementation cost ~200 LOC + heuristic test corpus.
 
-**Recommendation:** **Option B**, carried from the security-review-expert pass on this sequencing. The marginal complexity is small and it closes the path-dependence trap. The decision must be recorded here before the Part C matrix can be finalized and before #168 acceptance criteria are locked.
+**Rationale.** Under Option B, patterns 1 (in-tree pi extension, #148) and 2 (skill+curl, #147) are equivalent on both LLM01 and LLM02 for read-only operations. Pattern 1's pre-redaction via the `tool_result` middleware becomes defense-in-depth rather than load-bearing. This closes the [path-dependence trap](#d2--path-dependence-trap-skill-pattern-becomes-default) where pattern 2 would otherwise become the project's default integration story at a lower mitigation level than pattern 1.
+
+**Option A (PII-only) was rejected.** Cost was lower (~50 LOC) but it would have left LLM01 (prompt-injection via stored free-text expertise content) un-mitigated at the API layer, making pattern 1's pre-redaction load-bearing rather than belt-and-suspenders. The marginal cost of Option B over Option A (~150 LOC + test corpus) is small enough that the architectural simplification — patterns 1 and 2 truly equivalent on LLM01 — dominates.
 
 ### D2 — Path-dependence trap (skill pattern becomes default)
 
