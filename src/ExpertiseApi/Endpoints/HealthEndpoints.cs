@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-
 namespace ExpertiseApi.Endpoints;
 
 internal static class HealthEndpoints
@@ -72,14 +71,17 @@ internal static class HealthEndpoints
 
         app.MapHealthChecks("/health/live", liveOptions)
             .WithTags("Health")
-            .AllowAnonymous();
+            .AllowAnonymous()
+            .DisableRateLimiting();
 
         app.MapHealthChecks("/health/ready", readyOptions)
             .WithTags("Health")
-            .AllowAnonymous();
+            .AllowAnonymous()
+            .DisableRateLimiting();
 
         app.MapHealthChecks("/health", readyOptions)
             .WithTags("Health")
-            .AllowAnonymous();
+            .AllowAnonymous()
+            .DisableRateLimiting();
     }
 }

@@ -1,6 +1,7 @@
 using ExpertiseApi.Auth;
 using ExpertiseApi.Data;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ExpertiseApi.Endpoints;
 
@@ -10,7 +11,8 @@ internal static class SearchEndpoints
     {
         var group = app.MapGroup("/expertise/search")
             .WithTags("Search")
-            .RequireAuthorization("ReadAccess");
+            .RequireAuthorization("ReadAccess")
+            .RequireRateLimiting("expertise-read");
 
         group.MapGet("/", KeywordSearch);
 

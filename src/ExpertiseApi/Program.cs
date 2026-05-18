@@ -2,6 +2,8 @@
 
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Claims;
+using System.Threading.RateLimiting;
 using ExpertiseApi.Auth;
 using ExpertiseApi.Cli;
 using ExpertiseApi.Data;
@@ -10,7 +12,10 @@ using ExpertiseApi.Endpoints;
 using ExpertiseApi.Services;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.SemanticKernel;
@@ -84,6 +89,94 @@ builder.Services.AddProblemDetails(options =>
 // server-side; returns false so the default IProblemDetailsService writer
 // produces the response body (and the customizer above fires).
 builder.Services.AddExceptionHandler<UnhandledExceptionLogger>();
+
+// Rate limiting (Part D C5). Three policies, per-principal partitioning with IP
+// fallback for unauthenticated paths. 429 responses route through the
+// IProblemDetailsService so the C4 customizer fires (correlation traceId, etc.)
+// and Retry-After is populated from the lease metadata.
+//   - expertise-read     fixed window 60/min  GET /expertise/* (non-semantic), GET /audit/*
+//   - expertise-write    fixed window 10/min  POST/PATCH/DELETE on writes
+//   - semantic-search    token bucket 10/min  /expertise/search/semantic (expensive: ONNX)
+// Health endpoints (/health/*) opt out via DisableRateLimiting in HealthEndpoints.
+builder.Services.AddRateLimiter(rateOptions =>
+{
+    rateOptions.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    rateOptions.OnRejected = async (ctx, ct) =>
+    {
+        if (ctx.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+        {
+            ctx.HttpContext.Response.Headers.RetryAfter =
+                ((int)retryAfter.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+        }
+
+        var problems = ctx.HttpContext.RequestServices.GetRequiredService<IProblemDetailsService>();
+        await problems.WriteAsync(new ProblemDetailsContext
+        {
+            HttpContext = ctx.HttpContext,
+            ProblemDetails = new ProblemDetails
+            {
+                Status = StatusCodes.Status429TooManyRequests,
+                Title = "Too Many Requests",
+                Type = "https://tools.ietf.org/html/rfc6585#section-4",
+            },
+        }).ConfigureAwait(false);
+    };
+
+    // Partition key resolution. Order matters: with MapInboundClaims=false on our JWT
+    // bearer scheme (Auth/AuthExtensions.cs) the OIDC `sub` claim is NOT mapped to
+    // .NET-style ClaimTypes.NameIdentifier, so the first branch is dead under our
+    // current config and the `sub` branch is the load-bearing one. Order kept this way
+    // as a defensive default: if a future maintainer toggles MapInboundClaims or wires
+    // a non-OIDC scheme that populates NameIdentifier, partitioning remains correct
+    // without code changes.
+    //
+    // IP fallback is dormant under the current endpoint map (every RequireRateLimiting
+    // route sits behind UseAuthentication/UseAuthorization so `sub` is always present;
+    // /health/* are DisableRateLimiting'd; /metrics and /query carry no rate-limit
+    // policy). If a future endpoint is given RequireRateLimiting with AllowAnonymous,
+    // the IP fallback becomes load-bearing and partition isolation depends on the
+    // ForwardedHeaders:KnownNetworks CIDR list being narrowly scoped — a misconfigured
+    // 0.0.0.0/0 would let off-network callers rotate partitions via X-Forwarded-For.
+    static string PartitionKey(HttpContext http) =>
+        http.User.FindFirstValue(ClaimTypes.NameIdentifier)
+        ?? http.User.FindFirstValue("sub")
+        ?? http.Connection.RemoteIpAddress?.ToString()
+        ?? "anonymous";
+
+    rateOptions.AddPolicy("expertise-read", http =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: PartitionKey(http),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            }));
+
+    rateOptions.AddPolicy("expertise-write", http =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: PartitionKey(http),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            }));
+
+    rateOptions.AddPolicy("semantic-search", http =>
+        RateLimitPartition.GetTokenBucketLimiter(
+            partitionKey: PartitionKey(http),
+            factory: _ => new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 10,
+                TokensPerPeriod = 10,
+                ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
+});
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -230,6 +323,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapHealthEndpoints();
 app.MapExpertiseEndpoints();

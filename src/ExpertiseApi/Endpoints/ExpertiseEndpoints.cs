@@ -5,6 +5,7 @@ using ExpertiseApi.Data;
 using ExpertiseApi.Models;
 using ExpertiseApi.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Pgvector;
 
@@ -19,31 +20,40 @@ internal static class ExpertiseEndpoints
             .RequireAuthorization();
 
         group.MapGet("/", ListEntries)
-            .RequireAuthorization("ReadAccess");
+            .RequireAuthorization("ReadAccess")
+            .RequireRateLimiting("expertise-read");
 
         group.MapGet("/drafts", ListDrafts)
-            .RequireAuthorization(AuthConstants.Policies.WriteApproveAccess);
+            .RequireAuthorization(AuthConstants.Policies.WriteApproveAccess)
+            .RequireRateLimiting("expertise-read");
 
         group.MapGet("/{id:guid}", GetEntry)
-            .RequireAuthorization("ReadAccess");
+            .RequireAuthorization("ReadAccess")
+            .RequireRateLimiting("expertise-read");
 
         group.MapPost("/", CreateEntry)
-            .RequireAuthorization("WriteAccess");
+            .RequireAuthorization("WriteAccess")
+            .RequireRateLimiting("expertise-write");
 
         group.MapPatch("/{id:guid}", UpdateEntry)
-            .RequireAuthorization("WriteAccess");
+            .RequireAuthorization("WriteAccess")
+            .RequireRateLimiting("expertise-write");
 
         group.MapDelete("/{id:guid}", DeleteEntry)
-            .RequireAuthorization("WriteAccess");
+            .RequireAuthorization("WriteAccess")
+            .RequireRateLimiting("expertise-write");
 
         group.MapPost("/batch", CreateBatch)
-            .RequireAuthorization("WriteAccess");
+            .RequireAuthorization("WriteAccess")
+            .RequireRateLimiting("expertise-write");
 
         group.MapPost("/{id:guid}/approve", ApproveEntry)
-            .RequireAuthorization(AuthConstants.Policies.WriteApproveAccess);
+            .RequireAuthorization(AuthConstants.Policies.WriteApproveAccess)
+            .RequireRateLimiting("expertise-write");
 
         group.MapPost("/{id:guid}/reject", RejectEntry)
-            .RequireAuthorization(AuthConstants.Policies.WriteApproveAccess);
+            .RequireAuthorization(AuthConstants.Policies.WriteApproveAccess)
+            .RequireRateLimiting("expertise-write");
 
         return group;
     }
