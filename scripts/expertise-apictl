@@ -15,9 +15,11 @@
 
 set -euo pipefail
 
-SERVICE="expertise-api"
-LABEL="com.thesemicolon.expertise-api"
+SERVICE="${EXPERTISE_API_SERVICE:-expertise-api}"
+LABEL="${EXPERTISE_API_LABEL:-com.thesemicolon.expertise-api}"
 HEALTH_URL="${EXPERTISE_API_URL:-http://127.0.0.1:8080}/health"
+READY_URL="${EXPERTISE_API_URL:-http://127.0.0.1:8080}/health/ready"
+READY_TIMEOUT="${EXPERTISE_API_READY_TIMEOUT:-30}"
 
 log() { printf '[expertise-apictl] %s\n' "$1"; }
 err() { printf '[expertise-apictl] ERROR: %s\n' "$1" >&2; exit 1; }
@@ -55,7 +57,48 @@ cmd_stop() {
   esac
 }
 
-cmd_restart() { cmd_stop; sleep 1; cmd_start; }
+cmd_restart() {
+  case "${OS}" in
+    macos)
+      # launchctl bootout is asynchronous: a cmd_stop+sleep+cmd_start sequence
+      # races and surfaces "Service is already loaded" or duplicate-spawns.
+      # `kickstart -k -p` is the atomic primitive (kill existing, then print
+      # the new PID, which blocks until the supervised process is spawned).
+      # See: man launchctl (Sonoma+).
+      launchctl kickstart -k -p "gui/$(id -u)/${LABEL}" ;;
+    linux)
+      # `systemctl --user restart` is itself atomic and synchronous; no need
+      # to compose stop+sleep+start.
+      systemctl --user restart "${SERVICE}.service" ;;
+    wsl_to_windows)
+      # No atomic restart primitive exposed by sc.exe over the WSL interop
+      # boundary; the stop+sleep+start pattern remains correct here.
+      cmd_stop; sleep 1; cmd_start ;;
+  esac
+  wait_for_ready
+}
+
+wait_for_ready() {
+  # Block until /health/ready returns 200 or READY_TIMEOUT elapses.
+  # Skippable for stub-service tests where no HTTP listener is wired up.
+  if [[ "${EXPERTISE_API_SKIP_READY:-0}" == "1" ]]; then
+    log "ready: skipped (EXPERTISE_API_SKIP_READY=1)"
+    return 0
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    log "ready: WARNING — curl not found; readiness NOT verified (install curl, or set EXPERTISE_API_SKIP_READY=1 to silence)"
+    return 0
+  fi
+  local deadline=$(( SECONDS + READY_TIMEOUT ))
+  while (( SECONDS < deadline )); do
+    if curl -fsS --max-time 2 "${READY_URL}" >/dev/null 2>&1; then
+      log "ready: OK (${READY_URL})"
+      return 0
+    fi
+    sleep 1
+  done
+  err "service did not reach ready state within ${READY_TIMEOUT}s at ${READY_URL}"
+}
 
 cmd_status() {
   case "${OS}" in
