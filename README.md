@@ -54,9 +54,22 @@ flowchart LR
 | GET | `/health/ready` | Readiness — 200 only when DB, ONNX model, and pending-migration checks are all healthy; 503 otherwise. Map this to k8s `readinessProbe` and load-balancer health checks. No auth. |
 | GET | `/health` | Back-compat alias for `/health/ready`. No auth. |
 | GET | `/metrics` | Prometheus scrape endpoint (no auth required) |
+| GET | `/openapi/v1.json` | OpenAPI 3.x document for this deployment (anonymous, all environments). Also attached as a release asset — see ["OpenAPI discovery"](#openapi-discovery) below |
 | GET | `/query` | Interactive query page (read-only, no auth to load) |
 
-All endpoints except `/health`, `/health/live`, `/health/ready`, `/query`, and `/metrics` require `Authorization: Bearer <token>` — a JWT (`Auth:Mode = Oidc`) or, in Development, an API key or LocalDev token (`Auth:Mode = Hybrid`). See [SKILL.md](.claude/skills/expertise-api-design/SKILL.md) for scopes, modes, and configuration.
+All endpoints except `/health`, `/health/live`, `/health/ready`, `/query`, `/metrics`, and `/openapi/v1.json` require `Authorization: Bearer <token>` — a JWT (`Auth:Mode = Oidc`) or, in Development, an API key or LocalDev token (`Auth:Mode = Hybrid`). See [SKILL.md](.claude/skills/expertise-api-design/SKILL.md) for scopes, modes, and configuration.
+
+### OpenAPI discovery
+
+The live OpenAPI document is served from `/openapi/v1.json` in **all** environments. The endpoint is anonymous (no bearer required) and not rate-limited so downstream tooling — LLM agents, codegen, third-party clients — can discover the API surface before holding a token.
+
+```bash
+curl https://<host>/openapi/v1.json | jq '.info, .paths | keys'
+```
+
+The document advertises the JWT Bearer security scheme (`components.securitySchemes.Bearer`, `bearerFormat: JWT`) and a document-level `security` requirement. Operations that allow anonymous access (`/health/*`, `/openapi/*`) are excluded from the security requirement by ApiExplorer.
+
+A version-pinned copy is also attached as a release asset (`openapi.json` + `openapi.json.sha256`) on every GitHub Release for offline consumers and codegen pipelines that need byte-stable input. See the [release page](https://github.com/TheSemicolon/agent-expertise-api/releases) and Part D C8 in `docs/security/integration-threat-model.md`. The interactive Scalar UI remains gated to Development (`/scalar/v1`) because the in-browser bearer-token storage pattern carries the same XSS exposure as `/query` (issue #124).
 
 ## Quick Start
 
