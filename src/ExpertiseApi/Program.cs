@@ -60,6 +60,20 @@ builder.Services.Configure<HostOptions>(options =>
     options.ShutdownTimeout = TimeSpan.FromSeconds(30);
 });
 
+// Output caching for the OpenAPI document. AddOpenApi does NOT cache by default
+// (each request walks the schema graph and runs every IOpenApiDocumentTransformer),
+// and the endpoint is anonymous + un-rate-limited per the discovery contract — a
+// 5-minute output cache stops anonymous spec-fetch loops from becoming a CPU
+// amplifier without compromising downstream tooling that polls infrequently.
+// Reference: https://learn.microsoft.com/aspnet/core/performance/caching/output
+builder.Services.AddOutputCache(options =>
+{
+    options.AddPolicy("openapi-discovery", policy => policy
+        .Cache()
+        .Expire(TimeSpan.FromMinutes(5))
+        .SetVaryByHost(true));
+});
+
 // AddOpenApi registers the document(s) consumed by both runtime MapOpenApi() and the
 // build-time _GenerateOpenApiDocuments target (Part D C8). The build-time output
 // (artifacts/openapi/ExpertiseApi.json) is OpenAPI 3.1.1 by the .NET 10 default — the
@@ -68,7 +82,13 @@ builder.Services.Configure<HostOptions>(options =>
 // consumers in the integration backlog (#147 skill = plain curl/JSON; #148 pi extension
 // = TypeScript codegen) are 3.1-compatible. If a 3.0-only consumer surfaces later, pin
 // here and verify the emitter honours it on the then-current SDK.
-builder.Services.AddOpenApi();
+//
+// BearerSecuritySchemeTransformer advertises the JWT Bearer scheme on every secured
+// operation so Scalar UI, codegen, and LLM agents know how to authenticate (#146).
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer<ExpertiseApi.OpenApi.BearerSecuritySchemeTransformer>();
+});
 
 // ProblemDetails sanitization (Part D C4). Always emit a traceId extension so
 // client-side error reports can be cross-referenced to server logs; outside
@@ -327,9 +347,25 @@ if (metricsEnabled)
     app.UseHttpMetrics();
 app.UseSerilogRequestLogging();
 
+// OpenAPI document discovery: exposed in ALL environments (#146). The spec is also
+// published as a GitHub Release asset (openapi.json + .sha256) via release.yml so
+// downstream agents/codegen can pin a version offline; the runtime endpoint serves
+// the live deployment's surface for ad-hoc discovery. Anonymous + not rate-limited
+// because (1) the spec is non-sensitive (already public via Release assets) and
+// (2) downstream tools must discover the API before holding a bearer token. The
+// 5-minute OutputCache (policy "openapi-discovery") backstops DoS by amortising
+// the per-request schema walk + transformer execution across spec-fetch loops.
+app.MapOpenApi()
+    .AllowAnonymous()
+    .DisableRateLimiting()
+    .CacheOutput("openapi-discovery");
+
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    // Scalar interactive UI stays Development-only — it's a browser-rendered HTML
+    // page that, like the /query debug UI below, would invite token-handling
+    // anti-patterns in a deployed environment. Downstream consumers should fetch
+    // the JSON document from /openapi/v1.json or the Release asset.
     app.MapScalarApiReference();
 
     // Static-file serving and the /query debug UI are Development-only because
@@ -348,6 +384,7 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
+app.UseOutputCache();
 
 app.MapHealthEndpoints();
 app.MapExpertiseEndpoints();
