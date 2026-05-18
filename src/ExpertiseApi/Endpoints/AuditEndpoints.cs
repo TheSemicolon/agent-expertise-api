@@ -2,6 +2,7 @@ using ExpertiseApi.Auth;
 using ExpertiseApi.Data;
 using ExpertiseApi.Models;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ExpertiseApi.Endpoints;
 
@@ -15,7 +16,8 @@ internal static class AuditEndpoints
     {
         var group = app.MapGroup("/audit")
             .WithTags("Audit")
-            .RequireAuthorization(AuthConstants.Policies.AdminAccess);
+            .RequireAuthorization(AuthConstants.Policies.AdminAccess)
+            .RequireRateLimiting("expertise-read");
 
         group.MapGet("/", ListAudit);
 

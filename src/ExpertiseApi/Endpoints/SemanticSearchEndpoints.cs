@@ -2,6 +2,7 @@ using ExpertiseApi.Auth;
 using ExpertiseApi.Data;
 using ExpertiseApi.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ExpertiseApi.Endpoints;
 
@@ -11,7 +12,8 @@ internal static class SemanticSearchEndpoints
     {
         var group = app.MapGroup("/expertise/search/semantic")
             .WithTags("Search")
-            .RequireAuthorization("ReadAccess");
+            .RequireAuthorization("ReadAccess")
+            .RequireRateLimiting("semantic-search");
 
         group.MapGet("/", SemanticSearch);
 

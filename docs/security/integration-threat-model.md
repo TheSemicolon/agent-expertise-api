@@ -381,18 +381,40 @@ The four alternative patterns mitigate or sidestep many MCP threats but presume 
 
 | Control | Description | Gates pattern | Tracked under | Status |
 |---|---|---|---|---|
-| **C1** | **Loopback bind by default.** Kestrel binds `127.0.0.1` unless the deployment explicitly opts into non-loopback exposure via env var or Helm value. | (3), (4); hardens (1), (2) | #167 (gates #146) | ❌ Not implemented |
+| **C1** | **Loopback bind by default.** Kestrel binds `127.0.0.1` unless the deployment explicitly opts into non-loopback exposure via env var or Helm value. | (3), (4); hardens (1), (2) | #167 (gates #146) | ✅ Implemented — reframed to shape-per-shape reachability boundary (HostFiltering allow-list + dev-laptop loopback `applicationUrl`); see [Part D C1 note](#part-d-c1-implementation-notes) |
 | **C2** | **LocalTrust / OIDC auth posture.** Multi-issuer JWT bearer with policy scheme is the production auth; dev-only ApiKey / LocalDev / Hybrid modes. | All patterns | #12 (existing) | ⚠️ Partial — dev modes wired, OIDC issuers TBD |
 | **C3** | **Idempotency keys** on mutating endpoints — `Idempotency-Key` header honored on POST/PATCH/DELETE; replay returns cached response. | (1), (2) — write tools | — (no issue; future write-tool work, not #146–#149) | ❌ Not implemented |
-| **C4** | **Sanitized `ProblemDetails`** — strip `Detail` / `Instance` in non-Development; log full detail server-side with correlation ID. | All patterns | #167 (gates #146) | ⚠️ Partial — `AddProblemDetails()` called but not customized |
-| **C5** | **Rate limiting** — per-principal policies on read / write / semantic-search endpoints; health endpoints exempt. | All patterns; amplifies for (1), (2) | #167 (gates #146) | ❌ Not implemented |
+| **C4** | **Sanitized `ProblemDetails`** — strip `Detail` / `Instance` in non-Development; log full detail server-side with correlation ID. | All patterns | #167 (gates #146) | ✅ Implemented — `CustomizeProblemDetails` scrubs Detail/Instance outside Development, always emits `traceId` extension; `UnhandledExceptionLogger` (typed `IExceptionHandler`) logs full exception server-side |
+| **C5** | **Rate limiting** — per-principal policies on read / write / semantic-search endpoints; health endpoints exempt. | All patterns; amplifies for (1), (2) | #167 (gates #146) | ✅ Implemented — three policies (`expertise-read` 60/min, `expertise-write` 10/min, `semantic-search` 10/min token-bucket), per-principal partitioning, health endpoints `DisableRateLimiting`'d, 429 carries ProblemDetails shape + `Retry-After` |
 | **C6** | **Agent-vs-human audit tag** — `actor_class` column on audit rows; `X-Actor-Class` header contract; default `human`. | (1), (2) | #168 (gates #147) | ❌ Not implemented |
 | **C7** | **Response hygiene — Option B (PII + injection-neutralization).** Strip PII (emails, phone numbers, embedded credentials, AWS access keys, GitHub tokens) AND delimiter-wrap free-text fields (`<expertise_content>…</expertise_content>`), apply instruction-stripping heuristics (`\bignore previous\b`, role-impersonation patterns), tag content-class in the JSON response. Decision recorded [D1](#d1--c7-response-hygiene-scope-locked-option-b). | (2), (3), (4); defense-in-depth for (1) | #168 (gates #147) | ❌ Not implemented; scope locked Option B |
-| **C8** | **Pinned artifacts** — `openapi.json.sha256` attached to GitHub Releases; skill / extension fetch contracts verify hashes. | (1), (2), (3) | #167 (gates #146) | ❌ Not implemented |
+| **C8** | **Pinned artifacts** — `openapi.json.sha256` attached to GitHub Releases; skill / extension fetch contracts verify hashes. | (1), (2), (3) | #167 (gates #146) | ✅ Implemented — `Microsoft.Extensions.ApiDescription.Server` emits `openapi.json` at build time; release.yml attaches `openapi.json` + `openapi.json.sha256` to the GitHub Release; CI smoke-checks the artifact presence. Supply-chain hardening (cosign sign-blob over openapi.json, closing the sha256-in-band-with-artifact gap) is tracked under #172 — explicit deferral per #167 scope ("SHA-256 + GitHub Release provenance is sufficient v1"). |
 
-**Implementation progress: 0/8 controls fully implemented; 2/8 partial.**
+**Implementation progress: 4/8 controls fully implemented (C1, C4, C5, C8 via #167); 1/8 partial (C2 via #12); 3/8 not started (C3 future, C6/C7 via #168).**
 
 Per-PR rule: any PR that lands a control updates the Status column in this table in the same commit, so doc and code stay aligned. The companion ADR records this rule explicitly.
+
+### Part D C1 implementation notes
+
+C1 as implemented diverges from the literal `EXPERTISE_API_BIND_ADDRESS` + Helm `bindAddress` design the issue body originally proposed. The architectural insight (credited to a docker-expert / dotnet-expert subagent fan-out, 2026-05-18) is that **"loopback by default" is the reachability boundary of each deployment shape, not literally `127.0.0.1`**:
+
+| Shape | Reachability boundary | Bind config source |
+|---|---|---|
+| `dotnet run` (laptop) | Kestrel bind address | `launchSettings.json applicationUrl=http://127.0.0.1:5005` |
+| `docker run` | Container netns + `-p` flag | Inherit `ASPNETCORE_HTTP_PORTS=8080` from `aspnet:10.0` base |
+| Helm / k8s | `Service` + `Ingress` | `service.targetPort: 8080`; no in-pod bind override |
+
+Binding `127.0.0.1` *inside a container* would make the pod unreachable from the k8s Service (the namespace IS the loopback equivalent at the container layer). A custom `EXPERTISE_API_BIND_ADDRESS` env var would duplicate `ASPNETCORE_HTTP_PORTS` / `ASPNETCORE_URLS` (which the .NET runtime already honors with well-known precedence); a custom Helm `bindAddress` would duplicate `service.targetPort` and invite drift.
+
+The concrete C1 work in #167:
+
+- `appsettings.json` `AllowedHosts` tightened from `"*"` to `"localhost;127.0.0.1;[::1]"` — activates ASP.NET Core `HostFilteringMiddleware` as DNS-rebind defense-in-depth (browser-resident attacker pages cannot reach the laptop loopback API even if the network path is permitted).
+- `launchSettings.json` `applicationUrl` uses `127.0.0.1` (not `localhost`) to defeat the macOS / Windows dual-stack-`localhost` surprise where Kestrel may bind the IPv6 wildcard family.
+- Helm `allowedHosts` value renders an env override so operators fronting the API via Ingress can extend the allow-list to their externally-routable hostnames without code changes.
+- A startup-log line (`[C1] Kestrel bound to {Addresses}`) makes the effective reachability boundary greppable in container logs.
+- Dockerfile carries a comment block noting that the chiseled `runtime-deps` base does NOT inherit `ASPNETCORE_HTTP_PORTS` and must set it explicitly if adopted.
+
+The issue body (#167) was amended with this reframe before implementation; the threat-model and the issue agree.
 
 ---
 

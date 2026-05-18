@@ -1,12 +1,21 @@
 #pragma warning disable SKEXP0070
 
+using System.Diagnostics;
 using System.Globalization;
+using System.Security.Claims;
+using System.Threading.RateLimiting;
 using ExpertiseApi.Auth;
 using ExpertiseApi.Cli;
 using ExpertiseApi.Data;
+using ExpertiseApi.Diagnostics;
 using ExpertiseApi.Endpoints;
 using ExpertiseApi.Services;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.SemanticKernel;
@@ -51,8 +60,131 @@ builder.Services.Configure<HostOptions>(options =>
     options.ShutdownTimeout = TimeSpan.FromSeconds(30);
 });
 
+// AddOpenApi registers the document(s) consumed by both runtime MapOpenApi() and the
+// build-time _GenerateOpenApiDocuments target (Part D C8). The build-time output
+// (artifacts/openapi/ExpertiseApi.json) is OpenAPI 3.1.1 by the .NET 10 default — the
+// `OpenApiOptions.OpenApiVersion` knob in Microsoft.AspNetCore.OpenApi 10.0.7 does NOT
+// currently propagate to the build-time emitter (verified 2026-05-18). Downstream
+// consumers in the integration backlog (#147 skill = plain curl/JSON; #148 pi extension
+// = TypeScript codegen) are 3.1-compatible. If a 3.0-only consumer surfaces later, pin
+// here and verify the emitter honours it on the then-current SDK.
 builder.Services.AddOpenApi();
-builder.Services.AddProblemDetails();
+
+// ProblemDetails sanitization (Part D C4). Always emit a traceId extension so
+// client-side error reports can be cross-referenced to server logs; outside
+// Development, scrub Detail/Instance to prevent exception-message / connection-
+// string / stack-frame leakage in 5xx responses (LLM02). See Part D C4 in
+// docs/security/integration-threat-model.md and ADR / threat-model rationale.
+builder.Services.AddProblemDetails(options =>
+{
+    options.CustomizeProblemDetails = ctx =>
+    {
+        var traceId = Activity.Current?.TraceId.ToString() ?? ctx.HttpContext.TraceIdentifier;
+        ctx.ProblemDetails.Extensions["traceId"] = traceId;
+        ctx.ProblemDetails.Instance ??= ctx.HttpContext.Request.Path.Value;
+
+        var env = ctx.HttpContext.RequestServices.GetRequiredService<IHostEnvironment>();
+        if (!env.IsDevelopment())
+        {
+            ctx.ProblemDetails.Detail = null;
+            ctx.ProblemDetails.Instance = null;
+            ctx.ProblemDetails.Extensions.Remove("exception");
+        }
+    };
+});
+
+// Typed IExceptionHandler (.NET 8+ preferred shape). Logs full exception
+// server-side; returns false so the default IProblemDetailsService writer
+// produces the response body (and the customizer above fires).
+builder.Services.AddExceptionHandler<UnhandledExceptionLogger>();
+
+// Rate limiting (Part D C5). Three policies, per-principal partitioning with IP
+// fallback for unauthenticated paths. 429 responses route through the
+// IProblemDetailsService so the C4 customizer fires (correlation traceId, etc.)
+// and Retry-After is populated from the lease metadata.
+//   - expertise-read     fixed window 60/min  GET /expertise/* (non-semantic), GET /audit/*
+//   - expertise-write    fixed window 10/min  POST/PATCH/DELETE on writes
+//   - semantic-search    token bucket 10/min  /expertise/search/semantic (expensive: ONNX)
+// Health endpoints (/health/*) opt out via DisableRateLimiting in HealthEndpoints.
+builder.Services.AddRateLimiter(rateOptions =>
+{
+    rateOptions.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    rateOptions.OnRejected = async (ctx, ct) =>
+    {
+        if (ctx.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+        {
+            ctx.HttpContext.Response.Headers.RetryAfter =
+                ((int)retryAfter.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+        }
+
+        var problems = ctx.HttpContext.RequestServices.GetRequiredService<IProblemDetailsService>();
+        await problems.WriteAsync(new ProblemDetailsContext
+        {
+            HttpContext = ctx.HttpContext,
+            ProblemDetails = new ProblemDetails
+            {
+                Status = StatusCodes.Status429TooManyRequests,
+                Title = "Too Many Requests",
+                Type = "https://tools.ietf.org/html/rfc6585#section-4",
+            },
+        }).ConfigureAwait(false);
+    };
+
+    // Partition key resolution. Order matters: with MapInboundClaims=false on our JWT
+    // bearer scheme (Auth/AuthExtensions.cs) the OIDC `sub` claim is NOT mapped to
+    // .NET-style ClaimTypes.NameIdentifier, so the first branch is dead under our
+    // current config and the `sub` branch is the load-bearing one. Order kept this way
+    // as a defensive default: if a future maintainer toggles MapInboundClaims or wires
+    // a non-OIDC scheme that populates NameIdentifier, partitioning remains correct
+    // without code changes.
+    //
+    // IP fallback is dormant under the current endpoint map (every RequireRateLimiting
+    // route sits behind UseAuthentication/UseAuthorization so `sub` is always present;
+    // /health/* are DisableRateLimiting'd; /metrics and /query carry no rate-limit
+    // policy). If a future endpoint is given RequireRateLimiting with AllowAnonymous,
+    // the IP fallback becomes load-bearing and partition isolation depends on the
+    // ForwardedHeaders:KnownNetworks CIDR list being narrowly scoped — a misconfigured
+    // 0.0.0.0/0 would let off-network callers rotate partitions via X-Forwarded-For.
+    static string PartitionKey(HttpContext http) =>
+        http.User.FindFirstValue(ClaimTypes.NameIdentifier)
+        ?? http.User.FindFirstValue("sub")
+        ?? http.Connection.RemoteIpAddress?.ToString()
+        ?? "anonymous";
+
+    rateOptions.AddPolicy("expertise-read", http =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: PartitionKey(http),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            }));
+
+    rateOptions.AddPolicy("expertise-write", http =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: PartitionKey(http),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            }));
+
+    rateOptions.AddPolicy("semantic-search", http =>
+        RateLimitPartition.GetTokenBucketLimiter(
+            partitionKey: PartitionKey(http),
+            factory: _ => new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 10,
+                TokensPerPeriod = 10,
+                ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
+});
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -103,6 +235,22 @@ if (File.Exists(modelPath) && File.Exists(vocabPath))
     builder.Services.AddBertOnnxEmbeddingGenerator(modelPath, vocabPath);
 }
 builder.Services.AddScoped<EmbeddingService>();
+
+// Build-time OpenAPI document generation (Microsoft.Extensions.ApiDescription.Server,
+// Part D C8) constructs a stripped host with ValidateOnBuild=true. Without ONNX model
+// files staged at build time, IEmbeddingGenerator isn't registered and the validation
+// rejects EmbeddingService's transitive dependency before any endpoint metadata is read.
+// At runtime this validation correctly catches misconfigurations; in the build-time
+// host nothing is actually served, so it is safe (and necessary) to disable. See
+// ExpertiseApi.Auth.AuthExtensions.IsBuildTimeOpenApiContext.
+if (ExpertiseApi.Auth.AuthExtensions.IsBuildTimeOpenApiContext())
+{
+    builder.Host.UseDefaultServiceProvider(opts =>
+    {
+        opts.ValidateOnBuild = false;
+        opts.ValidateScopes = false;
+    });
+}
 
 builder.Services.Configure<DeduplicationOptions>(
     builder.Configuration.GetSection("Deduplication"));
@@ -199,6 +347,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapHealthEndpoints();
 app.MapExpertiseEndpoints();
@@ -208,7 +357,22 @@ app.MapAuditEndpoints();
 if (metricsEnabled)
     app.MapMetrics().AllowAnonymous();
 
-try { await app.RunAsync(); }
+try
+{
+    // Diagnostic log of the effective Kestrel bind addresses (Part D C1).
+    // Kestrel already logs "Now listening on: ..." at Info; this prefixed line is
+    // greppable in container logs to confirm the reachability boundary at startup.
+    // See docs/security/integration-threat-model.md Part D C1 for the shape-per-shape model.
+    app.Lifetime.ApplicationStarted.Register(() =>
+    {
+        var addresses = app.Services.GetRequiredService<IServer>()
+            .Features.Get<IServerAddressesFeature>()?.Addresses;
+        if (addresses is not null && addresses.Count > 0)
+            Log.Information("[C1] Kestrel bound to {Addresses}", string.Join(", ", addresses));
+    });
+
+    await app.RunAsync();
+}
 #pragma warning disable CA1031 // Top-level fatal handler — log any unhandled exception then exit. Re-throwing here would suppress the log and produce a less-useful stack trace.
 catch (Exception ex)
 #pragma warning restore CA1031
