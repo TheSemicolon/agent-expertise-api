@@ -15,8 +15,8 @@
 
 set -euo pipefail
 
-SERVICE="expertise-api"
-LABEL="com.thesemicolon.expertise-api"
+SERVICE="${EXPERTISE_API_SERVICE:-expertise-api}"
+LABEL="${EXPERTISE_API_LABEL:-com.thesemicolon.expertise-api}"
 HEALTH_URL="${EXPERTISE_API_URL:-http://127.0.0.1:8080}/health"
 READY_URL="${EXPERTISE_API_URL:-http://127.0.0.1:8080}/health/ready"
 READY_TIMEOUT="${EXPERTISE_API_READY_TIMEOUT:-30}"
