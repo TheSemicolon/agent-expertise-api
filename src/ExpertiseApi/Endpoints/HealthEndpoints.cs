@@ -69,42 +69,26 @@ internal static class HealthEndpoints
             },
         };
 
-        // Note: MapHealthChecks returns IEndpointConventionBuilder (not RouteHandlerBuilder),
-        // so the typed .Produces<T>() / .ProducesProblem() extensions do not apply. We rely
-        // on .WithMetadata(new ProducesResponseTypeAttribute(...)) for OpenAPI discovery.
-        var ok200 = new Microsoft.AspNetCore.Mvc.ProducesResponseTypeAttribute(
-            typeof(string), StatusCodes.Status200OK);
-        var unavailable503 = new Microsoft.AspNetCore.Mvc.ProducesResponseTypeAttribute(
-            typeof(string), StatusCodes.Status503ServiceUnavailable);
+        // NOTE: Health endpoints are intentionally absent from the generated OpenAPI
+        // document. MapHealthChecks does not register API-Explorer descriptors
+        // (no MethodInfo / ParameterDescriptions), so summary / Produces metadata
+        // attached here would be dead weight. The endpoints are documented in the
+        // README "API Surface" table and exercised by HealthEndpointTests — those
+        // are the actual contract surface for operators.
 
         app.MapHealthChecks("/health/live", liveOptions)
             .WithTags("Health")
             .AllowAnonymous()
-            .DisableRateLimiting()
-            .WithSummary("Liveness probe (200 while the process responds)")
-            .WithDescription("Returns 200 with the literal text `Healthy` while the process is responsive. Independent of " +
-                             "downstream dependencies (no checks evaluated). systemd `WatchdogSec=` and k8s `livenessProbe` " +
-                             "should point here.")
-            .WithMetadata(ok200);
+            .DisableRateLimiting();
 
         app.MapHealthChecks("/health/ready", readyOptions)
             .WithTags("Health")
             .AllowAnonymous()
-            .DisableRateLimiting()
-            .WithSummary("Readiness probe (200 when all `ready`-tagged checks pass)")
-            .WithDescription("Aggregates the DB ping, ONNX model presence, and pending-migrations checks. 200 with `Healthy` when " +
-                             "all pass; 503 with `Degraded` or `Unhealthy` otherwise. k8s `readinessProbe` and load-balancer " +
-                             "health checks should point here.")
-            .WithMetadata(ok200)
-            .WithMetadata(unavailable503);
+            .DisableRateLimiting();
 
         app.MapHealthChecks("/health", readyOptions)
             .WithTags("Health")
             .AllowAnonymous()
-            .DisableRateLimiting()
-            .WithSummary("Back-compat alias for /health/ready")
-            .WithDescription("Identical behaviour to /health/ready. Retained for pre-existing probes and monitors.")
-            .WithMetadata(ok200)
-            .WithMetadata(unavailable503);
+            .DisableRateLimiting();
     }
 }
