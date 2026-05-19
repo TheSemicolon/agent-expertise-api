@@ -57,9 +57,9 @@ public class RateLimitingTests : IAsyncLifetime
 
         final.Should().NotBeNull();
         final!.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
-        final.Headers.RetryAfter.Should().NotBeNull("the OnRejected callback must populate Retry-After from lease metadata");
+        final!.Headers.RetryAfter.Should().NotBeNull("the OnRejected callback must populate Retry-After from lease metadata");
 
-        var body = await final.Content.ReadAsStringAsync();
+        var body = await final!.Content.ReadAsStringAsync();
         body.Should().NotBeNullOrEmpty();
         var doc = JsonDocument.Parse(body);
         doc.RootElement.TryGetProperty("title", out var title).Should().BeTrue();
