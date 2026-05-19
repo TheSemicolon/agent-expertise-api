@@ -33,7 +33,7 @@ public class HostFilteringTests : IAsyncLifetime
     [Fact]
     public async Task AllowedHost_Localhost_Returns200()
     {
-        var client = _factory.CreateClient();
+        using var client = _factory.CreateClient();
         var req = new HttpRequestMessage(HttpMethod.Get, "/health/live");
         // ApiFactory's default base address is http://localhost/, which carries Host: localhost
         // — explicit set documents intent.
@@ -45,7 +45,7 @@ public class HostFilteringTests : IAsyncLifetime
     [Fact]
     public async Task AllowedHost_LoopbackIpv4_Returns200()
     {
-        var client = _factory.CreateClient();
+        using var client = _factory.CreateClient();
         var req = new HttpRequestMessage(HttpMethod.Get, "/health/live");
         req.Headers.Host = "127.0.0.1";
         var response = await client.SendAsync(req);
@@ -55,7 +55,7 @@ public class HostFilteringTests : IAsyncLifetime
     [Fact]
     public async Task DisallowedHost_ArbitraryDomain_Returns400()
     {
-        var client = _factory.CreateClient();
+        using var client = _factory.CreateClient();
         var req = new HttpRequestMessage(HttpMethod.Get, "/health/live");
         req.Headers.Host = "evil.example.com";
         var response = await client.SendAsync(req);
