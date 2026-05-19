@@ -82,7 +82,27 @@ function getBaseUrl(): string {
 			"EXPERTISE_API_BASE_URL is not set. Export it or write it to ~/.config/expertise-api/secrets.env.",
 		);
 	}
-	return raw.replace(/\/+$/, "");
+	const normalised = raw.replace(/\/+$/, "");
+	// Refuse to send the bearer over cleartext unless explicitly pointed at a
+	// loopback host (developer mode). Closes the misconfiguration footgun
+	// flagged by security-review on PR #179: a base URL of 'http://...' would
+	// otherwise leak the token in cleartext on the wire.
+	let parsed: URL;
+	try {
+		parsed = new URL(normalised);
+	} catch {
+		throw new Error(`EXPERTISE_API_BASE_URL is not a valid URL: ${raw}`);
+	}
+	const isLoopback =
+		parsed.hostname === "localhost" ||
+		parsed.hostname === "127.0.0.1" ||
+		parsed.hostname === "[::1]";
+	if (parsed.protocol !== "https:" && !isLoopback) {
+		throw new Error(
+			`EXPERTISE_API_BASE_URL must use https:// (or a loopback host for dev). Got: ${raw}`,
+		);
+	}
+	return normalised;
 }
 
 function getToken(): string {
@@ -203,6 +223,8 @@ const EntryTypeEnum = StringEnum([
 
 const SeverityEnum = StringEnum(["Info", "Warning", "Critical"] as const);
 
+const VisibilityEnum = StringEnum(["Private", "Shared"] as const);
+
 const CreateEntryParams = Type.Object({
 	domain: Type.String({
 		description: "Logical grouping (e.g. 'shared', 'azure-devops', 'iac').",
@@ -227,6 +249,12 @@ const CreateEntryParams = Type.Object({
 	tags: Type.Optional(
 		Type.Array(Type.String(), {
 			description: "Free-form tags (text[] with GIN index).",
+		}),
+	),
+	tenant: Type.Optional(
+		Type.String({
+			description:
+				"Optional tenant override. Only 'shared' is accepted; all other tenants are server-assigned from the caller's token. Requires expertise.write.approve and bypasses the draft queue (created Approved, not Draft).",
 		}),
 	),
 });
@@ -419,18 +447,23 @@ export default function (pi: ExtensionAPI): void {
 		name: "expertise_approve",
 		label: "Expertise Approve",
 		description:
-			"Transition a Draft entry to Approved via POST /expertise/{id}/approve. Requires expertise.write.approve. Returns 409 if the entry is not in Draft state (state machine).",
+			"Transition a Draft entry to Approved via POST /expertise/{id}/approve. Requires expertise.write.approve. Optional `visibility` ('Private' default | 'Shared') is forwarded in the request body to choose post-approval visibility. Returns 409 if the entry is not in Draft state (state machine).",
 		promptSnippet:
 			"Approve a draft expertise entry. Requires expertise.write.approve.",
 		parameters: Type.Object({
 			id: Type.String({ description: "Entry id (GUID)." }),
+			visibility: Type.Optional(VisibilityEnum),
 		}),
 		async execute(_id, params, signal) {
 			try {
 				const enc = encodeURIComponent(params.id);
+				const init: RequestInit = { method: "POST" };
+				if (params.visibility !== undefined) {
+					init.body = JSON.stringify({ visibility: params.visibility });
+				}
 				const result = await apiCall(
 					`/expertise/${enc}/approve`,
-					{ method: "POST" },
+					init,
 					signal,
 				);
 				return toolResult(result, "expertise_approve");
