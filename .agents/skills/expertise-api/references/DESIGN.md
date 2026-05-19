@@ -1,11 +1,10 @@
-# expertise-api \u2014 design reference
+# expertise-api — design reference
 
 Loaded on demand from `SKILL.md`. Covers data model, scopes, approval state
-machine, audit log, and authentication modes. Action-oriented usage \u2014 the
-curl toolkit and when to invoke it \u2014 lives in `SKILL.md`.
+machine, audit log, and authentication modes. Action-oriented usage — the
+curl toolkit and when to invoke it — lives in `SKILL.md`.
 
 ---
-
 
 ## Design Decisions
 

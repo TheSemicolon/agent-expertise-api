@@ -116,6 +116,45 @@ curl -sS "https://expertise.example.com/audit?actorClass=agent" \
   -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.[] | {entryId, actorClass, authMethod, actorClassHeader, principal}'
 ```
 
+#### Skill install (Claude Code, Codex CLI, pi)
+
+The repo ships an action-oriented skill at [`.agents/skills/expertise-api/`](.agents/skills/expertise-api/SKILL.md). The skill wraps every CRUD + review operation as a small shell script under `scripts/` and is portable across any agent harness that supports the `agentskills.io` SKILL.md convention.
+
+**Claude Code** — add the path to your project or user settings:
+
+```jsonc
+// .claude/settings.json (or ~/.claude/settings.json)
+{
+  "skills": [".agents/skills/expertise-api"]
+}
+```
+
+A backwards-compat shim is retained at `.claude/skills/expertise-api-design/` (the old design-reference skill); it now points to the new location and will be removed in a future release.
+
+**Codex CLI** — add the path under the `skills` array in `~/.codex/config.toml` (or invoke `codex` with `--skill .agents/skills/expertise-api`).
+
+**pi** — either symlink `.agents/skills/expertise-api/` into `~/.pi/agent/skills/`, or add it to `settings.json`:
+
+```jsonc
+// ~/.pi/settings.json
+{
+  "skills": [".agents/skills/expertise-api"]
+}
+```
+
+Env contract for all three harnesses:
+
+```sh
+mkdir -p ~/.config/expertise-api
+cat > ~/.config/expertise-api/secrets.env <<'EOF'
+EXPERTISE_API_BASE_URL=https://expertise.example.com
+EXPERTISE_API_TOKEN=...
+EOF
+chmod 600 ~/.config/expertise-api/secrets.env
+```
+
+The scripts source that file automatically, so env vars do not need to be exported per shell. See the skill's [`SKILL.md`](.agents/skills/expertise-api/SKILL.md) for the full toolkit (`search`, `search-semantic`, `get`, `create`, `approve`, `reject`) and `references/DESIGN.md` for the underlying scope hierarchy and approval state machine.
+
 ### Response hygiene
 
 All `/expertise/*` read responses are run through a response-hygiene pipeline (Part D C7, scope locked as D1 Option B, delimiter strategy locked as nonce per [ADR-008](adrs/008-response-hygiene-and-actor-class.md)). The pipeline is **always on** for every caller — no opt-out flag exists in v1. Admin debugging of the original audit row is served by `GET /audit/{id}/raw`.
