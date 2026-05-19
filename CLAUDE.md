@@ -128,13 +128,44 @@ curl "http://localhost:5000/expertise/search/semantic?q=test&limit=5" \
 
 ## Agent Integration
 
-AI agents (Claude Code, GitHub Copilot) consume this API via HTTP with a bearer token. Typical agent workflow:
+AI agents (Claude Code, GitHub Copilot, Codex CLI, pi) consume this API via HTTP with a bearer token. Typical agent workflow:
 
 1. **Search** existing expertise before solving a problem: `GET /expertise/search?q=<query>` or `GET /expertise/search/semantic?q=<query>`
 2. **Create** a new entry when discovering a fix, caveat, or pattern: `POST /expertise`
 3. **Update** an entry when information changes: `PATCH /expertise/{id}`
 
 All endpoints except `/health`, `/query`, and `/metrics` require `Authorization: Bearer <token>`.
+
+### Skill
+
+An action-oriented skill ships in-tree at [`.agents/skills/expertise-api/`](.agents/skills/expertise-api/SKILL.md). It wraps each CRUD + review operation as a small curl-based script and is portable across pi, Claude Code, and Codex CLI.
+
+```jsonc
+// Claude Code — .claude/settings.json or ~/.claude/settings.json
+{ "skills": [".agents/skills/expertise-api"] }
+```
+
+```jsonc
+// pi — ~/.pi/settings.json (or symlink into ~/.pi/agent/skills/)
+{ "skills": [".agents/skills/expertise-api"] }
+```
+
+Codex CLI: add the path to `skills = [...]` in `~/.codex/config.toml`.
+
+The legacy skill at `.claude/skills/expertise-api-design/SKILL.md` is now a shim that redirects to the new path. The design reference (data model, scopes, approval state machine, audit-log shape, authentication modes) moved to [`.agents/skills/expertise-api/references/DESIGN.md`](.agents/skills/expertise-api/references/DESIGN.md) and is loaded on demand only.
+
+Env contract used by every script in the skill:
+
+```sh
+mkdir -p ~/.config/expertise-api
+cat > ~/.config/expertise-api/secrets.env <<'EOF'
+EXPERTISE_API_BASE_URL=https://expertise.example.com
+EXPERTISE_API_TOKEN=...
+EOF
+chmod 600 ~/.config/expertise-api/secrets.env
+```
+
+The scripts source that file automatically when present — no per-shell exports needed.
 
 ## Native OS service install (Archetype A2)
 
@@ -363,6 +394,6 @@ The `ExpertiseDbContext` exposes both as `DbSet<>`. **`IExpertiseRepository` is 
 
 ## Architecture & Design
 
-For API surface, authentication, embedding architecture, and known gotchas, see `.claude/skills/expertise-api-design/SKILL.md` (authoritative reference). Use the `expertise-api-owner` agent for design and implementation questions.
+For API surface, authentication, embedding architecture, and known gotchas, see [`.agents/skills/expertise-api/references/DESIGN.md`](.agents/skills/expertise-api/references/DESIGN.md) (authoritative reference). Use the `expertise-api-owner` agent for design and implementation questions.
 
 For the secure-rebuild design rationale, see `adrs/001-tenancy-model.md`, `adrs/002-multi-idp-oidc.md`, and `adrs/003-scope-split.md`.
