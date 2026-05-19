@@ -261,7 +261,17 @@ builder.Services.AddDbContext<ExpertiseDbContext>(options =>
 //     unapplied migrations. The framework default maps Degraded → 200 OK; the
 //     readyOptions registration in HealthEndpoints.cs explicitly overrides
 //     ResultStatusCodes so Degraded surfaces as 503.
+//
+//     Per-probe cost is O(1): the actual EF query runs in
+//     MigrationStateRefresher (IHostedService, 5-minute cadence + one-shot
+//     at startup), and the health check is a thin volatile read of the
+//     singleton MigrationState snapshot. Issue #158 (decouples /health/ready
+//     from per-probe DB round-trips).
 string[] readyTag = ["ready"];
+builder.Services.AddSingleton<ExpertiseApi.Services.Health.MigrationState>();
+builder.Services.AddSingleton<ExpertiseApi.Services.Health.IMigrationState>(sp =>
+    sp.GetRequiredService<ExpertiseApi.Services.Health.MigrationState>());
+builder.Services.AddHostedService<ExpertiseApi.Services.Health.MigrationStateRefresher>();
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<ExpertiseDbContext>(
         name: "db",
